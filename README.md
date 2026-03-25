@@ -2,6 +2,8 @@
 
 Local-first Windows terminal built with Tauri, Rust, React, and xterm.js.
 
+![Termin hero](docs/hero.svg)
+
 Termin started as a reaction to cloud-first terminal products that feel heavy, require sign-in, or drift too far from a traditional shell workflow. The goal is simple: keep the terminal local, fast enough to use every day, and pleasant to look at on Windows.
 
 ## Current Focus
@@ -20,6 +22,17 @@ Termin started as a reaction to cloud-first terminal products that feel heavy, r
 - Vite
 - xterm.js
 - ConPTY via `portable-pty`
+
+## Snapshot
+
+![Termin workspace preview](docs/workspace.svg)
+
+Highlights:
+
+- Shell-first startup so the app becomes usable before optional AI tooling matters
+- PowerShell 7 and Command Prompt as the main launch targets
+- `Claude Code` kept as an optional entry instead of the center of the whole product
+- Native-feeling tabs, split panes, search, and local settings persistence
 
 ## What Works Today
 
