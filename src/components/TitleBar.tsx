@@ -29,7 +29,7 @@ export default function TitleBar({
         <div className="brand">
           <div className="brand-mark" />
           <div className="brand-copy">
-            <strong>Termin</strong>
+            <strong>SlateTerm</strong>
             <span>Local-first Windows terminal</span>
           </div>
         </div>
@@ -85,3 +85,4 @@ export default function TitleBar({
     </header>
   );
 }
+

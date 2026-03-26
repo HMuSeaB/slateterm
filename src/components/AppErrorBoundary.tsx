@@ -18,7 +18,7 @@ export default class AppErrorBoundary extends React.Component<Props, State> {
   }
 
   componentDidCatch(error: Error, info: React.ErrorInfo) {
-    console.error("Termin render crash", error, info);
+    console.error("SlateTerm render crash", error, info);
   }
 
   render() {
@@ -29,7 +29,7 @@ export default class AppErrorBoundary extends React.Component<Props, State> {
     return (
       <main className="app-shell theme-graphite fatal-screen">
         <section className="fatal-card">
-          <strong>Termin hit a runtime error</strong>
+          <strong>SlateTerm hit a runtime error</strong>
           <p>{this.state.error.message}</p>
           <pre>{this.state.error.stack}</pre>
         </section>
@@ -37,3 +37,4 @@ export default class AppErrorBoundary extends React.Component<Props, State> {
     );
   }
 }
+

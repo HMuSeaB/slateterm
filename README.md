@@ -1,10 +1,10 @@
-# Termin
+# SlateTerm
 
 Local-first Windows terminal built with Tauri, Rust, React, and xterm.js.
 
-![Termin hero](docs/hero.svg)
+![SlateTerm hero](docs/hero.svg)
 
-Termin started as a reaction to cloud-first terminal products that feel heavy, require sign-in, or drift too far from a traditional shell workflow. The goal is simple: keep the terminal local, fast enough to use every day, and pleasant to look at on Windows.
+SlateTerm started as a reaction to cloud-first terminal products that feel heavy, require sign-in, or drift too far from a traditional shell workflow. The goal is simple: keep the terminal local, fast enough to use every day, and pleasant to look at on Windows.
 
 ## Current Focus
 
@@ -25,7 +25,7 @@ Termin started as a reaction to cloud-first terminal products that feel heavy, r
 
 ## Snapshot
 
-![Termin workspace preview](docs/workspace.svg)
+![SlateTerm workspace preview](docs/workspace.svg)
 
 Highlights:
 
@@ -97,3 +97,4 @@ npm run tauri build
 - Keep the top toolbar clean and low-friction
 - Improve scroll behavior and pane ergonomics
 - Refine shell and AI profile handling without bloating the UI
+

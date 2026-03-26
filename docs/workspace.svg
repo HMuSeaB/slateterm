@@ -2,7 +2,7 @@
   <rect width="1280" height="820" fill="#0B0F15"/>
   <rect x="46" y="42" width="1188" height="736" rx="28" fill="#0C1118" stroke="#253243"/>
   <rect x="80" y="78" width="1120" height="68" rx="20" fill="#141B25" stroke="#202A36"/>
-  <text x="113" y="120" fill="#F7F4EA" font-size="18" font-family="Segoe UI, Arial, sans-serif" font-weight="700">TERMIN</text>
+  <text x="113" y="120" fill="#F7F4EA" font-size="18" font-family="Segoe UI, Arial, sans-serif" font-weight="700">SLATETERM</text>
   <rect x="247" y="95" width="84" height="34" rx="17" fill="#11212A" stroke="#234654"/>
   <text x="273" y="117" fill="#B9CAD4" font-size="13" font-family="Segoe UI, Arial, sans-serif">LOCAL</text>
   <rect x="790" y="88" width="138" height="48" rx="16" fill="#171E29" stroke="#263241"/>
@@ -35,3 +35,5 @@
   <rect x="705" y="602" width="162" height="40" rx="14" fill="#2B2214" stroke="#7C5D1D"/>
   <text x="741" y="627" fill="#FFF3DE" font-size="15" font-family="Segoe UI, Arial, sans-serif">Optional AI entry</text>
 </svg>
+
+

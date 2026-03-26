@@ -1,5 +1,5 @@
 [package]
-name = "termin"
+name = "slateterm"
 version = "0.1.0"
 description = "Windows local terminal shell"
 authors = ["Codex"]
@@ -18,3 +18,4 @@ windows-sys = { version = "0.59.0", features = [
   "Win32_Foundation",
   "Win32_System_Threading"
 ] }
+

@@ -6,7 +6,7 @@
   <rect x="80" y="78" width="1120" height="564" rx="30" fill="#0C1118" fill-opacity="0.92" stroke="#263241"/>
   <rect x="116" y="116" width="1048" height="74" rx="22" fill="#131923" stroke="#1D2733"/>
   <rect x="144" y="138" width="20" height="20" rx="6" fill="url(#mark)"/>
-  <text x="184" y="147" fill="#F7F4EA" font-size="18" font-family="Segoe UI, Arial, sans-serif" font-weight="700" letter-spacing="2">TERMIN</text>
+  <text x="184" y="147" fill="#F7F4EA" font-size="18" font-family="Segoe UI, Arial, sans-serif" font-weight="700" letter-spacing="2">SLATETERM</text>
   <text x="184" y="171" fill="#9BA6B2" font-size="13" font-family="Segoe UI, Arial, sans-serif">Local-first Windows terminal</text>
   <rect x="334" y="130" width="92" height="40" rx="20" fill="#11212A" stroke="#224452"/>
   <text x="361" y="155" fill="#B8C7D1" font-size="15" font-family="Segoe UI, Arial, sans-serif">LOCAL</text>
@@ -49,3 +49,5 @@
     </linearGradient>
   </defs>
 </svg>
+
+

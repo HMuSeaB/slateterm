@@ -99,7 +99,7 @@ export default function App() {
         void hydrateProfiles();
         await openTab(startupProfileId, loadedShells);
       } catch (error) {
-        console.error("Termin bootstrap failed", error);
+        console.error("SlateTerm bootstrap failed", error);
         if (cancelled) {
           return;
         }
@@ -482,3 +482,5 @@ export default function App() {
     </main>
   );
 }
+
+
