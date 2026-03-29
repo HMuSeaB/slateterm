@@ -88,7 +88,7 @@ npm run tauri build
 ## Repository Notes
 
 - The repo ignores local build output such as `node_modules`, `dist`, and `src-tauri/target`.
-- Current app version is `0.1.0`.
+- Current app version is `0.1.1`.
 - Startup is optimized around opening a shell quickly first; extra AI tooling should stay optional and minimal.
 
 ## Near-Term Direction
