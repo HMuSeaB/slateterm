@@ -1,7 +1,7 @@
 {
   "name": "slateterm",
   "private": true,
-  "version": "0.1.0",
+  "version": "0.1.1",
   "type": "module",
   "scripts": {
     "dev": "vite",
@@ -28,4 +28,5 @@
     "vite": "^5.4.10"
   }
 }
+
 
