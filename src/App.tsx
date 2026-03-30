@@ -4,7 +4,12 @@ import TabBar from "./components/TabBar";
 import TerminalPane from "./components/TerminalPane";
 import TitleBar from "./components/TitleBar";
 import { closeSession, createSession, listProfiles, listShellProfiles, loadSettings, saveSettings } from "./lib/tauri";
-import type { Pane, Profile, Settings, Tab } from "./lib/types";
+import type { Pane, Profile, Settings, StartupLayout, Tab } from "./lib/types";
+
+const DEFAULT_STARTUP_LAYOUT: StartupLayout = {
+  paneCount: 1,
+  splitRatio: 0.5,
+};
 
 const DEFAULT_SETTINGS: Settings = {
   theme: "graphite",
@@ -14,12 +19,52 @@ const DEFAULT_SETTINGS: Settings = {
   cursorStyle: "block",
   defaultProfileId: "pwsh",
   rememberLayout: true,
+  startupLayout: DEFAULT_STARTUP_LAYOUT,
 };
 
 const PANE_SPLITTER_WIDTH = 10;
 
 function makeId(prefix: string) {
   return `${prefix}-${crypto.randomUUID()}`;
+}
+
+function clampFontSize(value: number) {
+  return Math.min(28, Math.max(11, value));
+}
+
+function clampLineHeight(value: number) {
+  return Math.min(2, Math.max(1, value));
+}
+
+function normalizeSplitRatio(candidate: number | null | undefined) {
+  if (typeof candidate !== "number" || Number.isNaN(candidate)) {
+    return DEFAULT_STARTUP_LAYOUT.splitRatio;
+  }
+
+  return Math.min(0.78, Math.max(0.22, candidate));
+}
+
+function resolveStartupLayout(candidate: StartupLayout | null | undefined): StartupLayout {
+  return {
+    paneCount: candidate?.paneCount === 2 ? 2 : 1,
+    splitRatio: normalizeSplitRatio(candidate?.splitRatio),
+  };
+}
+
+function normalizeSettings(candidate: Settings): Settings {
+  return {
+    theme: candidate.theme === "paper" ? "paper" : DEFAULT_SETTINGS.theme,
+    fontFamily: candidate.fontFamily || DEFAULT_SETTINGS.fontFamily,
+    fontSize: clampFontSize(candidate.fontSize),
+    lineHeight: clampLineHeight(candidate.lineHeight),
+    cursorStyle:
+      candidate.cursorStyle === "underline" || candidate.cursorStyle === "bar"
+        ? candidate.cursorStyle
+        : DEFAULT_SETTINGS.cursorStyle,
+    defaultProfileId: candidate.defaultProfileId || DEFAULT_SETTINGS.defaultProfileId,
+    rememberLayout: candidate.rememberLayout !== false,
+    startupLayout: resolveStartupLayout(candidate.startupLayout),
+  };
 }
 
 function resolveProfileId(candidate: string | null | undefined, sourceProfiles: Profile[]) {
@@ -33,6 +78,17 @@ function resolveStartupProfileId(candidate: string | null | undefined, sourcePro
 
 function profileLabel(profileId: string, sourceProfiles: Profile[]) {
   return sourceProfiles.find((profile) => profile.id === profileId)?.name ?? profileId;
+}
+
+function layoutPreferenceFromTab(tab: Tab | null): StartupLayout {
+  if (!tab || tab.panes.length !== 2) {
+    return { ...DEFAULT_STARTUP_LAYOUT };
+  }
+
+  return {
+    paneCount: 2,
+    splitRatio: normalizeSplitRatio(tab.panes[0]?.sizeRatio),
+  };
 }
 
 export default function App() {
@@ -82,22 +138,22 @@ export default function App() {
           return;
         }
 
-        const startupProfileId = resolveStartupProfileId(loadedSettings.defaultProfileId, loadedShells);
+        const normalizedSettings = normalizeSettings(loadedSettings);
+        const startupProfileId = resolveStartupProfileId(normalizedSettings.defaultProfileId, loadedShells);
         const resolvedSettings =
-          startupProfileId === loadedSettings.defaultProfileId
-            ? loadedSettings
+          startupProfileId === normalizedSettings.defaultProfileId
+            ? normalizedSettings
             : {
-                ...loadedSettings,
+                ...normalizedSettings,
                 defaultProfileId: startupProfileId,
               };
 
         setProfiles(loadedShells);
         setSettings(resolvedSettings);
         setSelectedProfileId(startupProfileId);
-        setBooting(false);
-
+        await openStartupTab(startupProfileId, loadedShells, resolvedSettings);
         void hydrateProfiles();
-        await openTab(startupProfileId, loadedShells);
+        setBooting(false);
       } catch (error) {
         console.error("SlateTerm bootstrap failed", error);
         if (cancelled) {
@@ -120,14 +176,24 @@ export default function App() {
       return;
     }
 
+    const settingsToPersist: Settings = settings.rememberLayout
+      ? {
+          ...settings,
+          startupLayout: layoutPreferenceFromTab(activeTab),
+        }
+      : {
+          ...settings,
+          startupLayout: { ...DEFAULT_STARTUP_LAYOUT },
+        };
+
     const timer = window.setTimeout(() => {
-      void saveSettings(settings).catch((error) => {
+      void saveSettings(settingsToPersist).catch((error) => {
         console.error("Failed to save settings", error);
       });
     }, 250);
 
     return () => window.clearTimeout(timer);
-  }, [booting, settings]);
+  }, [activeTab, booting, settings]);
 
   useEffect(() => {
     const onMouseMove = (event: MouseEvent) => {
@@ -138,7 +204,7 @@ export default function App() {
 
       const rect = paneDeckRef.current.getBoundingClientRect();
       const rawRatio = (event.clientX - rect.left - PANE_SPLITTER_WIDTH / 2) / (rect.width - PANE_SPLITTER_WIDTH);
-      const clampedRatio = Math.min(0.78, Math.max(0.22, rawRatio));
+      const clampedRatio = normalizeSplitRatio(rawRatio);
 
       setTabs((current) =>
         current.map((tab) => {
@@ -196,24 +262,66 @@ export default function App() {
     return () => window.removeEventListener("keydown", onKeyDown);
   }, [activeTabId, selectedProfileId]);
 
-  async function openTab(profileId = selectedProfileId, sourceProfiles = profiles) {
-    try {
-      const resolvedProfileId = resolveProfileId(profileId, sourceProfiles);
-      const result = await createSession(resolvedProfileId, 120, 32);
-      const profileName = profileLabel(resolvedProfileId, sourceProfiles);
-      const pane: Pane = {
-        id: makeId("pane"),
-        sessionId: result.sessionId,
-        sizeRatio: 1,
-        title: profileName,
+  async function createTab(profileId: string, sourceProfiles: Profile[], layout = DEFAULT_STARTUP_LAYOUT) {
+    const resolvedProfileId = resolveProfileId(profileId, sourceProfiles);
+    const profileName = profileLabel(resolvedProfileId, sourceProfiles);
+    const primarySession = await createSession(resolvedProfileId, 120, 32);
+    const primaryPane: Pane = {
+      id: makeId("pane"),
+      sessionId: primarySession.sessionId,
+      sizeRatio: 1,
+      title: profileName,
+    };
+
+    if (layout.paneCount !== 2) {
+      return {
+        resolvedProfileId,
+        nextTab: {
+          id: makeId("tab"),
+          profileId: resolvedProfileId,
+          title: profileName,
+          panes: [primaryPane],
+          activePaneId: primaryPane.id,
+        } satisfies Tab,
       };
-      const nextTab: Tab = {
+    }
+
+    const secondarySession = await createSession(resolvedProfileId, 120, 32);
+    const splitRatio = normalizeSplitRatio(layout.splitRatio);
+    const secondaryPane: Pane = {
+      id: makeId("pane"),
+      sessionId: secondarySession.sessionId,
+      sizeRatio: 1 - splitRatio,
+      title: profileName,
+    };
+
+    return {
+      resolvedProfileId,
+      nextTab: {
         id: makeId("tab"),
         profileId: resolvedProfileId,
         title: profileName,
-        panes: [pane],
-        activePaneId: pane.id,
-      };
+        panes: [{ ...primaryPane, sizeRatio: splitRatio }, secondaryPane],
+        activePaneId: primaryPane.id,
+      } satisfies Tab,
+    };
+  }
+
+  async function openStartupTab(profileId: string, sourceProfiles: Profile[], startupSettings: Settings) {
+    const startupLayout = startupSettings.rememberLayout
+      ? resolveStartupLayout(startupSettings.startupLayout)
+      : { ...DEFAULT_STARTUP_LAYOUT };
+    const { resolvedProfileId, nextTab } = await createTab(profileId, sourceProfiles, startupLayout);
+
+    setTabs([nextTab]);
+    setActiveTabId(nextTab.id);
+    setSelectedProfileId(resolvedProfileId);
+    setBootError(null);
+  }
+
+  async function openTab(profileId = selectedProfileId, sourceProfiles = profiles) {
+    try {
+      const { resolvedProfileId, nextTab } = await createTab(profileId, sourceProfiles);
 
       setTabs((current) => [...current, nextTab]);
       setActiveTabId(nextTab.id);
@@ -372,7 +480,7 @@ export default function App() {
   const fontDeltaHandler = (delta: number) => {
     setSettings((current) => ({
       ...current,
-      fontSize: Math.min(28, Math.max(11, current.fontSize + delta)),
+      fontSize: clampFontSize(current.fontSize + delta),
     }));
   };
 
@@ -482,5 +590,3 @@ export default function App() {
     </main>
   );
 }
-
-

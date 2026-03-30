@@ -14,6 +14,11 @@ export type Profile = {
 export type CursorStyle = "block" | "underline" | "bar";
 export type ThemeMode = "graphite" | "paper";
 
+export type StartupLayout = {
+  paneCount: 1 | 2;
+  splitRatio: number;
+};
+
 export type Settings = {
   theme: ThemeMode;
   fontFamily: string;
@@ -22,6 +27,7 @@ export type Settings = {
   cursorStyle: CursorStyle;
   defaultProfileId: string;
   rememberLayout: boolean;
+  startupLayout: StartupLayout;
 };
 
 export type Pane = {

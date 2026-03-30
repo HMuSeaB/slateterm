@@ -17,7 +17,23 @@ pub struct Profile {
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
-#[serde(rename_all = "camelCase")]
+#[serde(default, rename_all = "camelCase")]
+pub struct StartupLayout {
+    pub pane_count: u8,
+    pub split_ratio: f32,
+}
+
+impl Default for StartupLayout {
+    fn default() -> Self {
+        Self {
+            pane_count: 1,
+            split_ratio: 0.5,
+        }
+    }
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(default, rename_all = "camelCase")]
 pub struct Settings {
     pub theme: String,
     pub font_family: String,
@@ -26,6 +42,7 @@ pub struct Settings {
     pub cursor_style: String,
     pub default_profile_id: String,
     pub remember_layout: bool,
+    pub startup_layout: StartupLayout,
 }
 
 impl Default for Settings {
@@ -38,6 +55,7 @@ impl Default for Settings {
             cursor_style: "block".into(),
             default_profile_id: "pwsh".into(),
             remember_layout: true,
+            startup_layout: StartupLayout::default(),
         }
     }
 }

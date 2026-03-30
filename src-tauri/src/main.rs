@@ -69,15 +69,18 @@ fn main() {
     let shell_profiles = shell_profiles();
     let profiles = default_profiles();
 
-    tauri::Builder::default()
+    let app = tauri::Builder::default()
         .manage(AppState {
             sessions: SessionManager::new(),
             profiles,
             shell_profiles,
         })
         .setup(|app| {
-            let window = app.get_webview_window("main").expect("main window");
-            let _ = window.show();
+            if let Some(window) = app.get_webview_window("main") {
+                let _ = window.show();
+            } else {
+                eprintln!("SlateTerm setup warning: main window was not available");
+            }
             Ok(())
         })
         .invoke_handler(tauri::generate_handler![
@@ -89,7 +92,9 @@ fn main() {
             write_input,
             resize_session,
             close_session
-        ])
-        .run(tauri::generate_context!())
-        .expect("error while running tauri application");
+        ]);
+
+    if let Err(error) = app.run(tauri::generate_context!()) {
+        eprintln!("SlateTerm failed to run: {error}");
+    }
 }
