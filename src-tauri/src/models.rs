@@ -118,6 +118,7 @@ pub struct Settings {
     pub remember_layout: bool,
     pub startup_layout: StartupLayout,
     pub last_cwd: Option<String>,
+    pub workspace_root: Option<String>,
     pub saved_state: Option<WorkspaceState>,
     pub named_workspaces: Vec<NamedWorkspace>,
 }
@@ -134,6 +135,7 @@ impl Default for Settings {
             remember_layout: true,
             startup_layout: StartupLayout::default(),
             last_cwd: None,
+            workspace_root: None,
             saved_state: None,
             named_workspaces: Vec::new(),
         }
@@ -172,6 +174,22 @@ pub struct TitleEvent {
 pub struct CwdEvent {
     pub session_id: String,
     pub cwd: String,
+}
+
+#[derive(Debug, Clone, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct FileEntry {
+    pub name: String,
+    pub path: String,
+    pub is_directory: bool,
+}
+
+#[derive(Debug, Clone, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct FilePreview {
+    pub path: String,
+    pub content: String,
+    pub truncated: bool,
 }
 
 #[derive(Debug, Clone, Serialize)]

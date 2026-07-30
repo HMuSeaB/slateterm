@@ -6,7 +6,14 @@ import { WebLinksAddon } from "@xterm/addon-web-links";
 import { Terminal } from "@xterm/xterm";
 import "@xterm/xterm/css/xterm.css";
 import { getSuggestion, recordCommand, type SuggestionResult } from "../lib/completionEngine";
-import { openExternalUrl, readClipboardText, resizeSession, saveTempImage, writeClipboardText, writeInput } from "../lib/tauri";
+import {
+  openExternalUrl,
+  readClipboardImage,
+  readClipboardText,
+  resizeSession,
+  writeClipboardText,
+  writeInput,
+} from "../lib/tauri";
 import type {
   CommandBlock,
   CommandBlockEvent,
@@ -168,49 +175,6 @@ export default function TerminalPane({
     const nextSugg = getSuggestion(nextVal);
     suggestionRef.current = nextSugg;
     setSuggestion(nextSugg);
-  }
-
-  async function handlePaste(event: React.ClipboardEvent<HTMLDivElement>) {
-    const items = event.clipboardData.items;
-    let imageItem: DataTransferItem | null = null;
-
-    if (items && items.length > 0) {
-      for (let i = 0; i < items.length; i++) {
-        if (items[i].type.startsWith("image/")) {
-          imageItem = items[i];
-          break;
-        }
-      }
-    }
-
-    if (imageItem) {
-      event.preventDefault();
-      const blob = imageItem.getAsFile();
-      if (blob) {
-        try {
-          const arrayBuffer = await blob.arrayBuffer();
-          const savedPath = await saveTempImage(new Uint8Array(arrayBuffer));
-          const formatted = savedPath.includes(" ") ? `"${savedPath}"` : savedPath;
-          setSessionStatus({ tone: "info", message: `Pasted image path: ${formatted}` });
-          updateBuffer(inputBufferRef.current + formatted);
-          void writeInput(sessionId, formatted);
-          return;
-        } catch (err) {
-          console.error("Failed to save pasted image", err);
-        }
-      }
-    }
-
-    const text = event.clipboardData.getData("text");
-    if (text) {
-      event.preventDefault();
-      setSessionStatus(null);
-      const printable = text.replace(/[\x00-\x1F\x7F-\x9F]/g, "");
-      if (printable) {
-        updateBuffer(inputBufferRef.current + printable);
-      }
-      void writeInput(sessionId, text);
-    }
   }
 
   function handleDragOver(event: React.DragEvent<HTMLDivElement>) {
@@ -418,13 +382,25 @@ export default function TerminalPane({
         }
       }
 
+      // Explicit paste-as-path mode for ordinary shells and CLIs. Regular
+      // Ctrl+V remains untouched so foreground TUIs can implement richer
+      // clipboard semantics, including native image attachments.
       if ((event.ctrlKey && event.shiftKey && key === "v") || (event.shiftKey && event.key === "Insert")) {
-        void readClipboardText()
-          .then((text) => {
+        event.preventDefault();
+        void readClipboardImage()
+          .then(async (imagePath) => {
+            if (imagePath) {
+              const formatted = imagePath.includes(" ") ? `"${imagePath}"` : imagePath;
+              setSessionStatus({ tone: "info", message: `Pasted clipboard image: ${formatted}` });
+              updateBuffer(inputBufferRef.current + formatted);
+              await writeInput(sessionId, formatted);
+              return;
+            }
+            const text = await readClipboardText();
             if (text) {
               setSessionStatus(null);
               updateBuffer(inputBufferRef.current + text.replace(/[\x00-\x1F\x7F-\x9F]/g, ""));
-              void writeInput(sessionId, text);
+              await writeInput(sessionId, text);
             }
           })
           .catch((error) => setSessionStatus({ tone: "error", message: `Paste failed: ${String(error)}` }));
@@ -630,7 +606,7 @@ export default function TerminalPane({
       onDragLeave={handleDragLeave}
       onDrop={handleDrop}
     >
-      <div className="terminal-surface" onPaste={handlePaste}>
+      <div className="terminal-surface">
         {isDragging && (
           <div className="drag-drop-overlay">
             <div className="drop-badge">

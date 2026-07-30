@@ -38,7 +38,7 @@ button {
 .app-shell {
   position: relative;
   display: grid;
-  grid-template-rows: 74px minmax(0, 1fr);
+  grid-template-rows: 58px minmax(0, 1fr);
   width: 100%;
   height: 100%;
   min-height: 0;
@@ -60,9 +60,9 @@ button {
   display: flex;
   align-items: center;
   justify-content: space-between;
-  gap: 20px;
+  gap: 16px;
   min-height: 0;
-  padding: 14px 18px 10px;
+  padding: 9px 14px;
   border-bottom: 1px solid rgba(255, 255, 255, 0.05);
   background:
     linear-gradient(180deg, rgba(13, 17, 24, 0.9), rgba(10, 14, 20, 0.68));
@@ -203,6 +203,58 @@ button {
   color: #fbfaf7;
 }
 
+.titlebar-controls {
+  display: flex;
+  align-items: center;
+  gap: 7px;
+}
+
+.profile-select,
+.primary-button,
+.icon-button {
+  height: 36px;
+  border: 1px solid rgba(255, 255, 255, 0.08);
+  border-radius: 10px;
+  color: inherit;
+  background: rgba(255, 255, 255, 0.035);
+}
+
+.profile-select {
+  min-width: 150px;
+  padding: 0 32px 0 11px;
+}
+
+.primary-button {
+  padding: 0 14px;
+  border-color: rgba(84, 181, 176, 0.32);
+  color: #dff7f4;
+  background: rgba(84, 181, 176, 0.13);
+}
+
+.icon-button {
+  display: grid;
+  width: 36px;
+  padding: 0;
+  place-items: center;
+  color: #aebac1;
+  font-size: 15px;
+}
+
+.primary-button:hover,
+.icon-button:hover {
+  border-color: rgba(84, 181, 176, 0.38);
+  color: #f4fffd;
+  background: rgba(84, 181, 176, 0.12);
+}
+
+.theme-paper .profile-select,
+.theme-paper .primary-button,
+.theme-paper .icon-button {
+  color: #2c261d;
+  border-color: rgba(44, 38, 29, 0.12);
+  background: rgba(255, 255, 255, 0.5);
+}
+
 .app-body {
   display: grid;
   grid-template-columns: minmax(0, 1fr);
@@ -217,18 +269,166 @@ button {
 
 .app-main-content {
   display: grid;
-  grid-template-rows: 56px minmax(0, 1fr);
+  grid-template-rows: 48px minmax(0, 1fr);
+}
+
+.app-main-content.has-terminal {
+  grid-template-rows: 48px minmax(120px, 1fr) minmax(0, 1.15fr);
+  min-width: 0;
+  min-height: 0;
+  overflow: hidden;
+  background: #0c1016;
+}
+
+.editor-toolbar {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  padding: 6px 12px;
+  border-bottom: 1px solid rgba(255, 255, 255, 0.055);
+}
+
+.editor-toolbar > div:first-child {
+  display: grid;
+  min-width: 0;
+  gap: 2px;
+}
+
+.editor-toolbar strong,
+.editor-toolbar span {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.editor-toolbar strong {
+  font-size: 12px;
+}
+
+.editor-toolbar span {
+  color: #71808a;
+  font-size: 10px;
+}
+
+.editor-toolbar > div:last-child {
+  display: flex;
+  gap: 6px;
+}
+
+.editor-toolbar .ghost-button {
+  padding: 7px 10px;
+  border-radius: 8px;
+  font-size: 11px;
+}
+
+.editor-welcome,
+.editor-message {
+  display: grid;
+  place-content: center;
+  justify-items: center;
+  min-width: 0;
+  min-height: 0;
+  padding: 32px;
+  text-align: center;
+  color: #83919a;
+}
+
+.editor-welcome-mark {
+  display: grid;
+  width: 52px;
+  height: 52px;
+  margin-bottom: 18px;
+  place-items: center;
+  border: 1px solid rgba(84, 181, 176, 0.3);
+  border-radius: 14px;
+  color: #84d5d0;
+  font-family: "Cascadia Mono", Consolas, monospace;
+  background: rgba(84, 181, 176, 0.08);
+}
+
+.editor-welcome h1 {
+  margin: 0;
+  color: #e6ecee;
+  font-size: 20px;
+  font-weight: 600;
+}
+
+.editor-welcome p,
+.editor-message span {
+  max-width: 480px;
+  margin: 9px 0 18px;
+  font-size: 13px;
+  line-height: 1.6;
+}
+
+.editor-welcome > div {
+  display: flex;
+  gap: 8px;
+}
+
+.editor-message strong {
+  color: #d9e1e4;
+  font-size: 15px;
+}
+
+.file-preview {
+  display: grid;
+  grid-template-rows: 44px minmax(0, 1fr) auto;
   min-width: 0;
   min-height: 0;
   overflow: hidden;
 }
 
+.file-preview header {
+  display: grid;
+  align-content: center;
+  gap: 2px;
+  padding: 0 16px;
+  border-bottom: 1px solid rgba(255, 255, 255, 0.045);
+}
+
+.file-preview header strong {
+  font-size: 12px;
+}
+
+.file-preview header span,
+.file-preview footer {
+  color: #667681;
+  font-size: 10px;
+}
+
+.file-preview pre {
+  margin: 0;
+  overflow: auto;
+  padding: 16px 20px;
+  color: #cdd7db;
+  font: 12px/1.65 "Cascadia Mono", Consolas, monospace;
+  tab-size: 2;
+  white-space: pre;
+}
+
+.file-preview footer {
+  padding: 6px 16px;
+  border-top: 1px solid rgba(255, 255, 255, 0.045);
+}
+
+.terminal-panel {
+  display: grid;
+  grid-template-rows: 42px minmax(0, 1fr);
+  min-width: 0;
+  min-height: 0;
+  overflow: hidden;
+  border-top: 1px solid rgba(255, 255, 255, 0.07);
+}
+
 .tabbar {
   display: flex;
   align-items: center;
-  gap: 10px;
+  gap: 3px;
   min-height: 0;
-  padding: 8px 18px 12px;
+  padding: 5px 10px 0;
+  border-bottom: 1px solid rgba(255, 255, 255, 0.045);
   overflow-x: auto;
   overflow-y: hidden;
   scrollbar-width: none;
@@ -241,14 +441,16 @@ button {
 .tab-pill {
   display: inline-flex;
   align-items: center;
-  gap: 12px;
-  min-width: 180px;
-  max-width: 260px;
-  padding: 12px 16px;
-  border: 1px solid rgba(255, 255, 255, 0.05);
-  border-radius: 16px;
+  gap: 9px;
+  min-width: 120px;
+  max-width: 230px;
+  height: 36px;
+  padding: 0 11px;
+  border: 0;
+  border-bottom: 2px solid transparent;
+  border-radius: 8px 8px 0 0;
   color: inherit;
-  background: rgba(255, 255, 255, 0.025);
+  background: transparent;
 }
 
 .tab-pill span:first-child {
@@ -258,11 +460,9 @@ button {
 }
 
 .tab-pill.is-active {
-  border-color: rgba(245, 158, 11, 0.34);
-  background:
-    linear-gradient(180deg, rgba(245, 158, 11, 0.12), rgba(84, 181, 176, 0.04)),
-    rgba(255, 255, 255, 0.03);
-  box-shadow: 0 10px 24px rgba(0, 0, 0, 0.16);
+  border-bottom-color: #54b5b0;
+  color: #f7f4ea;
+  background: rgba(84, 181, 176, 0.07);
 }
 
 .tab-pill-close {
@@ -274,11 +474,11 @@ button {
 .workspace-frame {
   position: relative;
   display: grid;
-  grid-template-rows: auto auto minmax(0, 1fr);
-  gap: 12px;
+  grid-template-rows: auto minmax(0, 1fr);
+  gap: 8px;
   min-height: 0;
   overflow: hidden;
-  padding: 0 18px 18px;
+  padding: 10px 12px 12px;
 }
 
 .boot-error-banner {
@@ -351,15 +551,43 @@ button {
   display: grid;
   grid-template-rows: auto minmax(0, 1fr);
   overflow: hidden;
-  gap: 10px;
+  gap: 5px;
 }
 
 .pane-caption {
   display: flex;
   align-items: center;
   justify-content: space-between;
-  min-height: 0;
-  padding: 0 6px;
+  min-height: 26px;
+  padding: 0 7px;
+  color: #8f9ba3;
+}
+
+.pane-caption strong {
+  margin: 0;
+  overflow: hidden;
+  font-size: 11px;
+  font-weight: 600;
+  text-overflow: ellipsis;
+  text-transform: none;
+  white-space: nowrap;
+}
+
+.pane-close {
+  display: grid;
+  width: 22px;
+  height: 22px;
+  padding: 0;
+  place-items: center;
+  border: 0;
+  border-radius: 6px;
+  color: inherit;
+  background: transparent;
+}
+
+.pane-close:hover {
+  color: #ffaaa2;
+  background: rgba(239, 107, 97, 0.1);
 }
 
 .splitter {
@@ -376,7 +604,7 @@ button {
   height: 100%;
   display: grid;
   border: 1px solid rgba(255, 255, 255, 0.06);
-  border-radius: 22px;
+  border-radius: 12px;
   overflow: hidden;
   background: rgba(5, 8, 12, 0.72);
   box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.04);
@@ -1107,7 +1335,7 @@ button {
   min-width: 0;
   min-height: 0;
   overflow: auto;
-  padding: 16px 12px;
+  padding: 13px 10px;
   border-right: 1px solid rgba(255, 255, 255, 0.07);
   background: rgba(8, 12, 17, 0.78);
 }
@@ -1130,6 +1358,100 @@ button {
   opacity: 0.68;
 }
 
+.workspace-root-card {
+  display: grid;
+  gap: 9px;
+  margin-top: 14px;
+  padding: 10px;
+  border: 1px solid rgba(84, 181, 176, 0.16);
+  border-radius: 10px;
+  background: rgba(84, 181, 176, 0.045);
+}
+
+.workspace-root-card > div {
+  display: grid;
+  gap: 3px;
+  min-width: 0;
+}
+
+.workspace-root-card strong,
+.workspace-root-card span {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.workspace-root-card strong {
+  font-size: 12px;
+}
+
+.workspace-root-card span {
+  color: #74828b;
+  font-size: 10px;
+}
+
+.workspace-root-card button {
+  justify-self: start;
+  padding: 5px 8px;
+  border: 0;
+  border-radius: 6px;
+  color: #9dded9;
+  font-size: 10px;
+  background: rgba(84, 181, 176, 0.1);
+}
+
+.file-tree {
+  margin: 0 -4px;
+  overflow: hidden;
+}
+
+.file-tree-row {
+  display: flex;
+  align-items: center;
+  gap: 5px;
+  width: 100%;
+  height: 27px;
+  padding-right: 7px;
+  overflow: hidden;
+  border: 0;
+  border-radius: 5px;
+  color: #aab5bb;
+  text-align: left;
+  background: transparent;
+}
+
+.file-tree-row:hover,
+.file-tree-row.is-selected {
+  color: #e1e9eb;
+  background: rgba(84, 181, 176, 0.075);
+}
+
+.file-tree-chevron {
+  flex: 0 0 10px;
+  color: #6d7b84;
+  text-align: center;
+}
+
+.file-tree-folder,
+.file-tree-file {
+  overflow: hidden;
+  font-size: 11px;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.file-tree-folder {
+  color: #bdc8cc;
+}
+
+.file-tree-error,
+.file-tree-empty {
+  padding: 9px 8px;
+  color: #d98980;
+  font-size: 10px;
+  line-height: 1.5;
+}
+
 .sidebar-collapse {
   width: 30px;
   height: 30px;
@@ -1141,8 +1463,8 @@ button {
 
 .sidebar-actions {
   display: grid;
-  gap: 7px;
-  margin: 16px 0;
+  gap: 3px;
+  margin: 13px 0;
 }
 
 .sidebar-actions button,
@@ -1152,9 +1474,9 @@ button {
   justify-content: space-between;
   gap: 8px;
   width: 100%;
-  padding: 9px 10px;
+  padding: 8px 9px;
   border: 1px solid transparent;
-  border-radius: 10px;
+  border-radius: 8px;
   color: inherit;
   text-align: left;
   background: transparent;
@@ -1177,7 +1499,7 @@ button {
   display: flex;
   align-items: center;
   justify-content: space-between;
-  margin: 18px 4px 8px;
+  margin: 15px 4px 6px;
   font-size: 11px;
   letter-spacing: 0.08em;
   text-transform: uppercase;

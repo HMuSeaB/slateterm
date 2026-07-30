@@ -42,7 +42,8 @@ Highlights:
 - Resize panes with the splitter
 - Search terminal output
 - Open terminal URLs with Ctrl+click in the default browser
-- Use native Windows clipboard shortcuts and paste file/image paths
+- Let foreground TUIs handle regular `Ctrl+V`, including Claude Code image attachments
+- Use `Ctrl+Shift+V` or `Shift+Insert` to explicitly paste clipboard text or an image file path
 - Save and restore named workspaces
 - Search, copy, and replay command history from the command palette
 - Inspect, collapse, copy, and rerun PowerShell command blocks

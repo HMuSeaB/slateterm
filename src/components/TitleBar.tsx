@@ -1,12 +1,11 @@
-import clsx from "clsx";
 import type { Profile } from "../lib/types";
 
 type Props = {
   profiles: Profile[];
   selectedProfileId: string;
   onSelectedProfileChange: (profileId: string) => void;
-  onLaunchProfile: (profileId: string) => void;
   onNewTab: () => void;
+  onOpenPalette: () => void;
   onSplit: () => void;
   onToggleWorkspaces: () => void;
   onToggleSettings: () => void;
@@ -16,14 +15,13 @@ export default function TitleBar({
   profiles,
   selectedProfileId,
   onSelectedProfileChange,
-  onLaunchProfile,
   onNewTab,
+  onOpenPalette,
   onSplit,
   onToggleWorkspaces,
   onToggleSettings,
 }: Props) {
-  const shellProfiles = profiles.filter((profile) => profile.category === "shell" && profile.featured);
-  const claudeProfiles = profiles.filter((profile) => profile.id === "claude");
+  const launchProfiles = profiles.filter((profile) => profile.featured && (profile.category === "shell" || profile.id === "claude"));
 
   return (
     <header className="titlebar titlebar-compact">
@@ -38,55 +36,22 @@ export default function TitleBar({
         <span className="brand-badge">Local</span>
       </div>
 
-      <div className="toolbar-shell toolbar-shell-compact">
-        <div className="profile-rail shell-rail">
-          {shellProfiles.map((profile) => (
-            <button
-              key={profile.id}
-              type="button"
-              title={profile.description}
-              className={clsx("profile-chip", selectedProfileId === profile.id && "is-active", "is-shell")}
-              onClick={() => {
-                onSelectedProfileChange(profile.id);
-                onLaunchProfile(profile.id);
-              }}
-            >
-              <strong>{profile.name}</strong>
-              <span>Shell</span>
-            </button>
+      <div className="titlebar-controls">
+        <select
+          className="profile-select"
+          aria-label="Profile for new tabs"
+          value={selectedProfileId}
+          onChange={(event) => onSelectedProfileChange(event.target.value)}
+        >
+          {launchProfiles.map((profile) => (
+            <option key={profile.id} value={profile.id}>{profile.name}</option>
           ))}
-
-          {claudeProfiles.map((profile) => (
-            <button
-              key={profile.id}
-              type="button"
-              title={profile.description}
-              className={clsx("profile-chip", selectedProfileId === profile.id && "is-active", "is-ai")}
-              onClick={() => {
-                onSelectedProfileChange(profile.id);
-                onLaunchProfile(profile.id);
-              }}
-            >
-              <strong>{profile.name}</strong>
-              <span>{profile.id === "claude" ? "New chat" : profile.id === "claude-continue" ? "Latest chat" : "Chat picker"}</span>
-            </button>
-          ))}
-        </div>
-
-        <div className="action-cluster action-cluster-compact">
-          <button type="button" className="ghost-button" onClick={onNewTab}>
-            New Tab
-          </button>
-          <button type="button" className="ghost-button" onClick={onSplit}>
-            Split
-          </button>
-          <button type="button" className="ghost-button" onClick={onToggleWorkspaces}>
-            Workspaces
-          </button>
-          <button type="button" className="ghost-button" onClick={onToggleSettings}>
-            Settings
-          </button>
-        </div>
+        </select>
+        <button type="button" className="primary-button" onClick={onNewTab}>New tab</button>
+        <button type="button" className="icon-button" title="Command palette (Ctrl+Shift+P)" onClick={onOpenPalette}>⌘</button>
+        <button type="button" className="icon-button" title="Split active tab" onClick={onSplit}>◫</button>
+        <button type="button" className="icon-button" title="Toggle workspace sidebar" onClick={onToggleWorkspaces}>☰</button>
+        <button type="button" className="icon-button" title="Settings" onClick={onToggleSettings}>⚙</button>
       </div>
     </header>
   );

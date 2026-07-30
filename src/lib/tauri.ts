@@ -1,6 +1,8 @@
 import { invoke } from "@tauri-apps/api/core";
 import type {
   CreateSessionResponse,
+  FileEntry,
+  FilePreview,
   Profile,
   Settings,
 } from "./types";
@@ -21,6 +23,18 @@ export async function saveSettings(settings: Settings) {
   return invoke<void>("save_settings", { settings });
 }
 
+export async function selectWorkspaceFolder() {
+  return invoke<string | null>("select_workspace_folder");
+}
+
+export async function listDirectory(path: string) {
+  return invoke<FileEntry[]>("list_directory", { path });
+}
+
+export async function readTextFile(path: string) {
+  return invoke<FilePreview>("read_text_file", { path });
+}
+
 export async function createSession(profileId: string, cols: number, rows: number, cwd?: string | null) {
   return invoke<CreateSessionResponse>("create_session", { profileId, cols, rows, cwd: cwd || null });
 }
@@ -37,8 +51,8 @@ export async function closeSession(sessionId: string) {
   return invoke<void>("close_session", { sessionId });
 }
 
-export async function saveTempImage(bytes: Uint8Array) {
-  return invoke<string>("save_temp_image", { bytes: Array.from(bytes) });
+export async function saveTempImage(bytes: Uint8Array, extension?: string) {
+  return invoke<string>("save_temp_image", { bytes: Array.from(bytes), extension: extension || null });
 }
 
 export async function openExternalUrl(url: string) {
@@ -47,6 +61,10 @@ export async function openExternalUrl(url: string) {
 
 export async function readClipboardText() {
   return invoke<string>("read_clipboard_text");
+}
+
+export async function readClipboardImage() {
+  return invoke<string | null>("read_clipboard_image");
 }
 
 export async function writeClipboardText(text: string) {

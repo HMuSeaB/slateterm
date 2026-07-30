@@ -54,6 +54,7 @@ export type Settings = {
   rememberLayout: boolean;
   startupLayout: StartupLayout;
   lastCwd?: string | null;
+  workspaceRoot?: string | null;
   savedState?: WorkspaceState | null;
   namedWorkspaces?: NamedWorkspace[];
 };
@@ -72,6 +73,18 @@ export type Tab = {
   title: string;
   panes: Pane[];
   activePaneId: string;
+};
+
+export type FileEntry = {
+  name: string;
+  path: string;
+  isDirectory: boolean;
+};
+
+export type FilePreview = {
+  path: string;
+  content: string;
+  truncated: boolean;
 };
 
 export type CreateSessionResponse = {

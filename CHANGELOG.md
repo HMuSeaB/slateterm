@@ -5,6 +5,7 @@
 - Restore startup layout preference when `rememberLayout` is enabled.
 - Reduce startup-time hard crashes by replacing `expect(...)` with recoverable diagnostics.
 - Add native URL and clipboard integration, named workspaces, command palette/history, and PowerShell command blocks.
+- Preserve regular `Ctrl+V` for foreground TUI clipboard handling while keeping `Ctrl+Shift+V` and `Shift+Insert` as explicit paste-as-path shortcuts.
 - Standardize dependency installation, frontend builds, and Tauri build hooks on pnpm.
 
 ## v0.1.1 - 2026-03-29

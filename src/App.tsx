@@ -1,13 +1,23 @@
 import { useEffect, useMemo, useRef, useState } from "react";
 import CommandPalette, { type PaletteCommand } from "./components/CommandPalette";
+import FilePreview from "./components/FilePreview";
 import HistoryPanel from "./components/HistoryPanel";
 import SettingsPanel from "./components/SettingsPanel";
 import TabBar from "./components/TabBar";
 import TerminalPane from "./components/TerminalPane";
 import TitleBar from "./components/TitleBar";
 import WorkspacePanel from "./components/WorkspacePanel";
-import { closeSession, createSession, listProfiles, listShellProfiles, loadSettings, saveSettings } from "./lib/tauri";
-import type { Pane, Profile, Settings, StartupLayout, Tab, WorkspaceState } from "./lib/types";
+import {
+  closeSession,
+  createSession,
+  listProfiles,
+  listShellProfiles,
+  loadSettings,
+  readTextFile,
+  saveSettings,
+  selectWorkspaceFolder,
+} from "./lib/tauri";
+import type { FilePreview as FilePreviewData, Pane, Profile, Settings, StartupLayout, Tab, WorkspaceState } from "./lib/types";
 
 const DEFAULT_STARTUP_LAYOUT: StartupLayout = {
   paneCount: 1,
@@ -23,6 +33,7 @@ const DEFAULT_SETTINGS: Settings = {
   defaultProfileId: "pwsh",
   rememberLayout: true,
   startupLayout: DEFAULT_STARTUP_LAYOUT,
+  workspaceRoot: null,
   namedWorkspaces: [],
 };
 
@@ -69,6 +80,7 @@ function normalizeSettings(candidate: Settings): Settings {
     rememberLayout: candidate.rememberLayout !== false,
     startupLayout: resolveStartupLayout(candidate.startupLayout),
     lastCwd: candidate.lastCwd || null,
+    workspaceRoot: candidate.workspaceRoot || null,
     savedState: candidate.savedState || null,
     namedWorkspaces: Array.isArray(candidate.namedWorkspaces) ? candidate.namedWorkspaces : [],
   };
@@ -108,6 +120,11 @@ export default function App() {
   const [workspaceOpen, setWorkspaceOpen] = useState(true);
   const [paletteOpen, setPaletteOpen] = useState(false);
   const [historyOpen, setHistoryOpen] = useState(false);
+  const [terminalPanelOpen, setTerminalPanelOpen] = useState(true);
+  const [selectedExplorerPath, setSelectedExplorerPath] = useState<string | null>(null);
+  const [terminalCwd, setTerminalCwd] = useState<string | null>(null);
+  const [filePreview, setFilePreview] = useState<FilePreviewData | null>(null);
+  const [filePreviewError, setFilePreviewError] = useState<string | null>(null);
   const [queuedCommand, setQueuedCommand] = useState<{ id: string; value: string; sessionId: string } | null>(null);
   const [booting, setBooting] = useState(true);
   const [bootError, setBootError] = useState<string | null>(null);
@@ -115,7 +132,6 @@ export default function App() {
   const dragStateRef = useRef<{ tabId: string } | null>(null);
 
   const activeTab = tabs.find((tab) => tab.id === activeTabId) ?? null;
-  const activeProfile = profiles.find((profile) => profile.id === activeTab?.profileId) ?? null;
 
   useEffect(() => {
     let cancelled = false;
@@ -489,10 +505,10 @@ export default function App() {
     setBootError(null);
   }
 
-  async function openTab(profileId = selectedProfileId, sourceProfiles = profiles) {
+  async function openTab(profileId = selectedProfileId, sourceProfiles = profiles, explicitCwd?: string | null) {
     try {
       const activePane = activeTab?.panes.find((pane) => pane.id === activeTab.activePaneId);
-      const targetCwd = activePane?.cwd || settings.lastCwd || null;
+      const targetCwd = explicitCwd || activePane?.cwd || settings.workspaceRoot || settings.lastCwd || null;
       const { resolvedProfileId, nextTab } = await createTab(profileId, sourceProfiles, DEFAULT_STARTUP_LAYOUT, targetCwd);
 
       setTabs((current) => [...current, nextTab]);
@@ -503,6 +519,45 @@ export default function App() {
       console.error("Failed to open tab", error);
       setBootError(error instanceof Error ? error.message : String(error));
     }
+  }
+
+  async function chooseWorkspaceFolder() {
+    try {
+      const folder = await selectWorkspaceFolder();
+      if (!folder) return;
+      setSettings((current) => ({ ...current, workspaceRoot: folder, lastCwd: folder }));
+      setSelectedExplorerPath(folder);
+      setTerminalCwd(folder);
+      setFilePreview(null);
+      setFilePreviewError(null);
+      setWorkspaceOpen(true);
+    } catch (error) {
+      setBootError(`Could not open workspace folder: ${String(error)}`);
+    }
+  }
+
+  async function previewWorkspaceFile(path: string) {
+    setSelectedExplorerPath(path);
+    try {
+      const preview = await readTextFile(path);
+      setFilePreview(preview);
+      setFilePreviewError(null);
+    } catch (error) {
+      setFilePreview(null);
+      setFilePreviewError(String(error));
+    }
+  }
+
+  function selectWorkspaceDirectory(path: string) {
+    setSelectedExplorerPath(path);
+    setTerminalCwd(path);
+    setFilePreview(null);
+    setFilePreviewError(null);
+  }
+
+  async function openWorkspaceTerminal() {
+    setTerminalPanelOpen(true);
+    await openTab(selectedProfileId, profiles, terminalCwd || settings.workspaceRoot || null);
   }
 
   async function splitActiveTab() {
@@ -733,8 +788,8 @@ export default function App() {
         profiles={profiles}
         selectedProfileId={selectedProfileId}
         onSelectedProfileChange={setSelectedProfileId}
-        onLaunchProfile={(profileId) => void openTab(profileId)}
         onNewTab={() => void openTab(selectedProfileId)}
+        onOpenPalette={() => setPaletteOpen(true)}
         onSplit={() => void splitActiveTab()}
         onToggleWorkspaces={() => setWorkspaceOpen((current) => !current)}
         onToggleSettings={() => setSettingsOpen((current) => !current)}
@@ -744,44 +799,58 @@ export default function App() {
         <WorkspacePanel
           open={workspaceOpen}
           workspaces={settings.namedWorkspaces || []}
-          tabs={tabs}
-          activeTabId={activeTabId}
+          workspaceRoot={settings.workspaceRoot}
+          selectedPath={selectedExplorerPath}
           onClose={() => setWorkspaceOpen(false)}
+          onChooseFolder={() => void chooseWorkspaceFolder()}
+          onSelectFile={(path) => void previewWorkspaceFile(path)}
+          onSelectDirectory={selectWorkspaceDirectory}
+          onOpenTerminal={() => void openWorkspaceTerminal()}
           onSaveCurrent={saveNamedWorkspace}
           onLoad={(workspaceId) => void loadNamedWorkspace(workspaceId)}
           onDelete={deleteNamedWorkspace}
-          onSelectTab={setActiveTabId}
           onOpenPalette={() => setPaletteOpen(true)}
           onOpenHistory={() => setHistoryOpen(true)}
         />
 
-        <div className="app-main-content">
-      <TabBar
-        tabs={tabs}
-        activeTabId={activeTabId}
-        onSelect={setActiveTabId}
-        onClose={(tabId) => void closeTab(tabId)}
-      />
+        <div className={`app-main-content ${terminalPanelOpen ? "has-terminal" : ""}`}>
+          <div className="editor-toolbar">
+            <div>
+              <strong>{filePreview?.path.split(/[\\/]/).pop() || settings.workspaceRoot?.split(/[\\/]/).filter(Boolean).slice(-1)[0] || "SlateTerm"}</strong>
+              <span>{filePreview?.path || settings.workspaceRoot || "No folder open"}</span>
+            </div>
+            <div>
+              <button type="button" className="ghost-button" onClick={() => void chooseWorkspaceFolder()}>Open folder</button>
+              <button type="button" className="ghost-button" onClick={() => setTerminalPanelOpen((current) => !current)}>
+                {terminalPanelOpen ? "Hide terminal" : "Show terminal"}
+              </button>
+            </div>
+          </div>
 
-      <section className="workspace-frame">
+          <FilePreview
+            workspaceRoot={settings.workspaceRoot}
+            preview={filePreview}
+            error={filePreviewError}
+            onChooseFolder={() => void chooseWorkspaceFolder()}
+            onOpenTerminal={() => void openWorkspaceTerminal()}
+          />
+
+          {terminalPanelOpen && (
+            <section className="terminal-panel">
+              <TabBar
+                tabs={tabs}
+                activeTabId={activeTabId}
+                onSelect={setActiveTabId}
+                onClose={(tabId) => void closeTab(tabId)}
+              />
+
+              <section className="workspace-frame">
         {bootError && (
           <div className="boot-error-banner">
             <strong>Startup issue</strong>
             <span>{bootError}</span>
           </div>
         )}
-
-        <div className="workspace-topline workspace-topline-compact">
-          <div>
-            <strong>{activeProfile?.name ?? "Shell"}</strong>
-            <span>{activeProfile?.description ?? (activeTab?.panes.length === 2 ? "Dual pane workspace" : "Single focused pane")}</span>
-          </div>
-          <div className="workspace-hints">
-            <span>Ctrl+T new tab</span>
-            <span>Ctrl+Shift+D split</span>
-            <span>Ctrl+Shift+F search</span>
-          </div>
-        </div>
 
         {activeTab ? (
           <div ref={paneDeckRef} className={`pane-deck panes-${activeTab.panes.length}`} style={paneGridStyle}>
@@ -795,17 +864,12 @@ export default function App() {
                     : undefined
                 }
               >
-                <div className="pane-caption">
-                  <div>
-                    <strong>{pane.title ?? "Shell"}</strong>
-                    <span>{pane.sessionId.slice(0, 8)}</span>
+                {activeTab.panes.length > 1 && (
+                  <div className="pane-caption">
+                    <strong>{pane.title ?? `Pane ${index + 1}`}</strong>
+                    <button type="button" className="pane-close" title="Close pane" onClick={() => void closePane(activeTab.id, pane.id)}>×</button>
                   </div>
-                  {activeTab.panes.length > 1 && (
-                    <button type="button" className="ghost-button" onClick={() => void closePane(activeTab.id, pane.id)}>
-                      Close Pane
-                    </button>
-                  )}
-                </div>
+                )}
 
                 <TerminalPane
                   sessionId={pane.sessionId}
@@ -836,7 +900,9 @@ export default function App() {
             <span>Use one of the shell buttons above, or open Claude Code when you need it.</span>
           </div>
         )}
-      </section>
+              </section>
+            </section>
+          )}
         </div>
       </div>
 

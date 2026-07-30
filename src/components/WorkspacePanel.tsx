@@ -1,20 +1,39 @@
-import type { NamedWorkspace, Tab } from "../lib/types";
+import FileTree from "./FileTree";
+import type { NamedWorkspace } from "../lib/types";
 
 type Props = {
   open: boolean;
   workspaces: NamedWorkspace[];
-  tabs: Tab[];
-  activeTabId: string | null;
+  workspaceRoot?: string | null;
+  selectedPath?: string | null;
   onClose: () => void;
+  onChooseFolder: () => void;
+  onSelectFile: (path: string) => void;
+  onSelectDirectory: (path: string) => void;
+  onOpenTerminal: () => void;
   onSaveCurrent: () => void;
   onLoad: (workspaceId: string) => void;
   onDelete: (workspaceId: string) => void;
-  onSelectTab: (tabId: string) => void;
   onOpenPalette: () => void;
   onOpenHistory: () => void;
 };
 
-export default function WorkspacePanel({ open, workspaces, tabs, activeTabId, onClose, onSaveCurrent, onLoad, onDelete, onSelectTab, onOpenPalette, onOpenHistory }: Props) {
+export default function WorkspacePanel({
+  open,
+  workspaces,
+  workspaceRoot,
+  selectedPath,
+  onClose,
+  onChooseFolder,
+  onSelectFile,
+  onSelectDirectory,
+  onOpenTerminal,
+  onSaveCurrent,
+  onLoad,
+  onDelete,
+  onOpenPalette,
+  onOpenHistory,
+}: Props) {
   if (!open) {
     return null;
   }
@@ -23,25 +42,37 @@ export default function WorkspacePanel({ open, workspaces, tabs, activeTabId, on
     <aside className="workspace-panel">
       <div className="workspace-panel-header">
         <div>
-          <strong>SlateTerm</strong>
-          <p>工作区与会话导航</p>
+          <strong>Workspace</strong>
+          <p>Tabs and saved layouts</p>
         </div>
         <button type="button" className="sidebar-collapse" title="Collapse sidebar" onClick={onClose}>‹</button>
       </div>
 
-      <div className="sidebar-actions">
-        <button type="button" onClick={onOpenPalette}><span>Command palette</span><kbd>Ctrl Shift P</kbd></button>
-        <button type="button" onClick={onOpenHistory}><span>Command history</span><kbd>Ctrl Shift R</kbd></button>
+      <div className="workspace-root-card">
+        <div>
+          <strong>{workspaceRoot ? workspaceRoot.split(/[\\/]/).filter(Boolean).slice(-1)[0] : "No folder open"}</strong>
+          <span>{workspaceRoot || "Choose a folder to browse files"}</span>
+        </div>
+        <button type="button" onClick={onChooseFolder}>{workspaceRoot ? "Change" : "Open folder"}</button>
       </div>
 
-      <div className="sidebar-section-heading"><span>Open tabs</span><span>{tabs.length}</span></div>
-      <div className="sidebar-tab-list">
-        {tabs.map((tab) => (
-          <button key={tab.id} type="button" className={tab.id === activeTabId ? "is-active" : ""} onClick={() => onSelectTab(tab.id)}>
-            <span>{tab.title}</span><small>{tab.panes.length === 2 ? "Split" : "Shell"}</small>
-          </button>
-        ))}
+      <div className="sidebar-actions">
+        <button type="button" onClick={onOpenTerminal}><span>New terminal</span><kbd>Ctrl T</kbd></button>
+        <button type="button" onClick={onOpenPalette}><span>Commands</span><kbd>Ctrl Shift P</kbd></button>
+        <button type="button" onClick={onOpenHistory}><span>History</span><kbd>Ctrl Shift R</kbd></button>
       </div>
+
+      <div className="sidebar-section-heading"><span>Explorer</span></div>
+      {workspaceRoot ? (
+        <FileTree
+          root={workspaceRoot}
+          selectedPath={selectedPath}
+          onSelectFile={onSelectFile}
+          onSelectDirectory={onSelectDirectory}
+        />
+      ) : (
+        <div className="workspace-empty">Open a folder to show its files.</div>
+      )}
 
       <div className="sidebar-section-heading"><span>Saved workspaces</span><button type="button" onClick={onSaveCurrent}>Save</button></div>
       <div className="workspace-list">
