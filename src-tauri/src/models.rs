@@ -34,6 +34,80 @@ impl Default for StartupLayout {
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(default, rename_all = "camelCase")]
+pub struct SavedPaneState {
+    pub profile_id: String,
+    pub cwd: Option<String>,
+    pub size_ratio: f32,
+    pub title: Option<String>,
+}
+
+impl Default for SavedPaneState {
+    fn default() -> Self {
+        Self {
+            profile_id: "pwsh".into(),
+            cwd: None,
+            size_ratio: 1.0,
+            title: None,
+        }
+    }
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(default, rename_all = "camelCase")]
+pub struct SavedTabState {
+    pub profile_id: String,
+    pub title: Option<String>,
+    pub panes: Vec<SavedPaneState>,
+}
+
+impl Default for SavedTabState {
+    fn default() -> Self {
+        Self {
+            profile_id: "pwsh".into(),
+            title: None,
+            panes: Vec::new(),
+        }
+    }
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(default, rename_all = "camelCase")]
+pub struct WorkspaceState {
+    pub tabs: Vec<SavedTabState>,
+    pub active_tab_index: usize,
+}
+
+impl Default for WorkspaceState {
+    fn default() -> Self {
+        Self {
+            tabs: Vec::new(),
+            active_tab_index: 0,
+        }
+    }
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(default, rename_all = "camelCase")]
+pub struct NamedWorkspace {
+    pub id: String,
+    pub name: String,
+    pub state: WorkspaceState,
+    pub updated_at: String,
+}
+
+impl Default for NamedWorkspace {
+    fn default() -> Self {
+        Self {
+            id: String::new(),
+            name: "Workspace".into(),
+            state: WorkspaceState::default(),
+            updated_at: String::new(),
+        }
+    }
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(default, rename_all = "camelCase")]
 pub struct Settings {
     pub theme: String,
     pub font_family: String,
@@ -43,6 +117,9 @@ pub struct Settings {
     pub default_profile_id: String,
     pub remember_layout: bool,
     pub startup_layout: StartupLayout,
+    pub last_cwd: Option<String>,
+    pub saved_state: Option<WorkspaceState>,
+    pub named_workspaces: Vec<NamedWorkspace>,
 }
 
 impl Default for Settings {
@@ -56,6 +133,9 @@ impl Default for Settings {
             default_profile_id: "pwsh".into(),
             remember_layout: true,
             startup_layout: StartupLayout::default(),
+            last_cwd: None,
+            saved_state: None,
+            named_workspaces: Vec::new(),
         }
     }
 }
@@ -89,6 +169,25 @@ pub struct TitleEvent {
 
 #[derive(Debug, Clone, Serialize)]
 #[serde(rename_all = "camelCase")]
+pub struct CwdEvent {
+    pub session_id: String,
+    pub cwd: String,
+}
+
+#[derive(Debug, Clone, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct CommandBlockEvent {
+    pub session_id: String,
+    pub block_id: String,
+    pub phase: String,
+    pub command: Option<String>,
+    pub output: Option<String>,
+    pub cwd: Option<String>,
+    pub exit_code: Option<i32>,
+}
+
+#[derive(Debug, Clone, Serialize)]
+#[serde(rename_all = "camelCase")]
 pub struct ErrorEvent {
     pub session_id: String,
     pub message: String,
@@ -97,7 +196,6 @@ pub struct ErrorEvent {
 struct ShellLaunch {
     label: String,
     command: String,
-    args: Vec<String>,
 }
 
 pub fn shell_profiles() -> Vec<Profile> {
@@ -110,9 +208,7 @@ pub fn shell_profiles() -> Vec<Profile> {
 pub fn default_profiles() -> Vec<Profile> {
     let mut profiles = shell_profiles();
     if let Some(preferred_shell) = profiles.first().cloned() {
-        if let Some(claude_profile) = discover_claude_profile(&preferred_shell) {
-            profiles.push(claude_profile);
-        }
+        profiles.extend(discover_claude_profiles(&preferred_shell));
     }
     profiles
 }
@@ -123,7 +219,7 @@ fn discover_shell_profiles() -> (Profile, Vec<Profile>) {
             id: "pwsh".into(),
             name: "PowerShell 7".into(),
             command: path,
-            args: vec!["-NoLogo".into()],
+            args: powershell_shell_args(),
             cwd: None,
             category: "shell".into(),
             description: "Modern PowerShell for daily Windows work".into(),
@@ -146,7 +242,7 @@ fn discover_shell_profiles() -> (Profile, Vec<Profile>) {
                 id: "powershell".into(),
                 name: "Windows PowerShell".into(),
                 command: legacy_path,
-                args: vec!["-NoLogo".into()],
+                args: powershell_shell_args(),
                 cwd: None,
                 category: "shell".into(),
                 description: "Compatibility shell for older scripts".into(),
@@ -161,7 +257,7 @@ fn discover_shell_profiles() -> (Profile, Vec<Profile>) {
                 id: "powershell".into(),
                 name: "Windows PowerShell".into(),
                 command: path,
-                args: vec!["-NoLogo".into()],
+                args: powershell_shell_args(),
                 cwd: None,
                 category: "shell".into(),
                 description: "Built-in PowerShell fallback".into(),
@@ -195,34 +291,103 @@ fn discover_shell_profiles() -> (Profile, Vec<Profile>) {
     }
 }
 
-fn discover_claude_profile(shell: &Profile) -> Option<Profile> {
+fn discover_claude_profiles(shell: &Profile) -> Vec<Profile> {
     if shell.id == "cmd" {
-        return None;
+        return Vec::new();
     }
 
-    let executable = find_command_path(&["claude.exe", "claude.cmd", "claude"])?;
+    let Some(executable) = find_command_path(&["claude.exe", "claude.cmd", "claude"]) else {
+        return Vec::new();
+    };
     let launch = ShellLaunch {
         label: shell.name.clone(),
         command: shell.command.clone(),
-        args: shell.args.clone(),
     };
 
-    let mut args = launch.args;
-    args.push("-NoExit".into());
-    args.push("-Command".into());
-    args.push(powershell_invocation(&executable));
-
-    Some(Profile {
-        id: "claude".into(),
-        name: "Claude Code".into(),
-        command: launch.command,
-        args,
-        cwd: None,
-        category: "ai".into(),
-        description: format!("Claude Code via {}", launch.label),
-        featured: true,
+    [
+        (
+            "claude",
+            "Claude Code",
+            "",
+            "Start a new Claude Code conversation",
+        ),
+        (
+            "claude-continue",
+            "Continue Claude",
+            " --continue",
+            "Continue the latest conversation in this workspace",
+        ),
+        (
+            "claude-resume",
+            "Resume Claude",
+            " --resume",
+            "Choose a previous conversation to resume",
+        ),
+    ]
+    .into_iter()
+    .map(|(id, name, suffix, description)| {
+        let args = vec![
+            "-NoLogo".into(),
+            "-NoExit".into(),
+            "-Command".into(),
+            format!("{}{suffix}", powershell_invocation(&executable)),
+        ];
+        Profile {
+            id: id.into(),
+            name: name.into(),
+            command: launch.command.clone(),
+            args,
+            cwd: None,
+            category: "ai".into(),
+            description: format!("{description} via {}", launch.label),
+            featured: true,
+        }
     })
+    .collect()
 }
+
+fn powershell_shell_args() -> Vec<String> {
+    vec![
+        "-NoLogo".into(),
+        "-NoExit".into(),
+        "-Command".into(),
+        POWERSHELL_SHELL_INTEGRATION.into(),
+    ]
+}
+
+const POWERSHELL_SHELL_INTEGRATION: &str = r#"
+$global:SlateTermEsc = [char]27
+$global:SlateTermBell = [char]7
+$global:SlateTermCommandPending = $false
+$global:SlateTermOriginalPrompt = (Get-Command prompt -CommandType Function).ScriptBlock
+function global:prompt {
+    $commandSucceeded = $?
+    if ($global:SlateTermCommandPending) {
+        $exitCode = if ($commandSucceeded) { 0 } elseif ($global:LASTEXITCODE -is [int] -and $global:LASTEXITCODE -ne 0) { $global:LASTEXITCODE } else { 1 }
+        [Console]::Write("$($global:SlateTermEsc)]133;D;$exitCode$($global:SlateTermBell)")
+        $global:SlateTermCommandPending = $false
+    }
+    [Console]::Write("$($global:SlateTermEsc)]133;A$($global:SlateTermBell)")
+    $cwdPath = (Get-Location).Path.Replace('\\', '/')
+    [Console]::Write("$($global:SlateTermEsc)]7;file://localhost/$cwdPath$($global:SlateTermBell)")
+    $promptText = & $global:SlateTermOriginalPrompt
+    [Console]::Write(($promptText -join ''))
+    [Console]::Write("$($global:SlateTermEsc)]133;B$($global:SlateTermBell)")
+    return ''
+}
+Import-Module PSReadLine -ErrorAction SilentlyContinue
+if (Get-Module PSReadLine) {
+    Set-PSReadLineKeyHandler -Key Enter -ScriptBlock {
+        param($key, $arg)
+        $line = ''
+        $cursor = 0
+        [Microsoft.PowerShell.PSConsoleReadLine]::GetBufferState([ref]$line, [ref]$cursor)
+        $global:SlateTermCommandPending = $true
+        [Console]::Write("$($global:SlateTermEsc)]133;C;$line$($global:SlateTermBell)")
+        [Microsoft.PowerShell.PSConsoleReadLine]::AcceptLine()
+    }
+}
+"#;
 
 fn find_command_path(candidates: &[&str]) -> Option<String> {
     for candidate in candidates {

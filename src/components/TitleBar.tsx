@@ -8,6 +8,7 @@ type Props = {
   onLaunchProfile: (profileId: string) => void;
   onNewTab: () => void;
   onSplit: () => void;
+  onToggleWorkspaces: () => void;
   onToggleSettings: () => void;
 };
 
@@ -18,10 +19,11 @@ export default function TitleBar({
   onLaunchProfile,
   onNewTab,
   onSplit,
+  onToggleWorkspaces,
   onToggleSettings,
 }: Props) {
-  const shellProfiles = profiles.filter((profile) => profile.category === "shell");
-  const claudeProfile = profiles.find((profile) => profile.id === "claude") ?? null;
+  const shellProfiles = profiles.filter((profile) => profile.category === "shell" && profile.featured);
+  const claudeProfiles = profiles.filter((profile) => profile.id === "claude");
 
   return (
     <header className="titlebar titlebar-compact">
@@ -54,20 +56,21 @@ export default function TitleBar({
             </button>
           ))}
 
-          {claudeProfile && (
+          {claudeProfiles.map((profile) => (
             <button
+              key={profile.id}
               type="button"
-              title={claudeProfile.description}
-              className={clsx("profile-chip", selectedProfileId === claudeProfile.id && "is-active", "is-ai")}
+              title={profile.description}
+              className={clsx("profile-chip", selectedProfileId === profile.id && "is-active", "is-ai")}
               onClick={() => {
-                onSelectedProfileChange(claudeProfile.id);
-                onLaunchProfile(claudeProfile.id);
+                onSelectedProfileChange(profile.id);
+                onLaunchProfile(profile.id);
               }}
             >
-              <strong>Claude Code</strong>
-              <span>AI CLI</span>
+              <strong>{profile.name}</strong>
+              <span>{profile.id === "claude" ? "New chat" : profile.id === "claude-continue" ? "Latest chat" : "Chat picker"}</span>
             </button>
-          )}
+          ))}
         </div>
 
         <div className="action-cluster action-cluster-compact">
@@ -76,6 +79,9 @@ export default function TitleBar({
           </button>
           <button type="button" className="ghost-button" onClick={onSplit}>
             Split
+          </button>
+          <button type="button" className="ghost-button" onClick={onToggleWorkspaces}>
+            Workspaces
           </button>
           <button type="button" className="ghost-button" onClick={onToggleSettings}>
             Settings

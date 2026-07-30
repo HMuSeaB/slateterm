@@ -19,6 +19,31 @@ export type StartupLayout = {
   splitRatio: number;
 };
 
+export type SavedPaneState = {
+  profileId: string;
+  cwd?: string | null;
+  sizeRatio?: number;
+  title?: string;
+};
+
+export type SavedTabState = {
+  profileId: string;
+  title?: string;
+  panes: SavedPaneState[];
+};
+
+export type WorkspaceState = {
+  tabs: SavedTabState[];
+  activeTabIndex: number;
+};
+
+export type NamedWorkspace = {
+  id: string;
+  name: string;
+  state: WorkspaceState;
+  updatedAt: string;
+};
+
 export type Settings = {
   theme: ThemeMode;
   fontFamily: string;
@@ -28,6 +53,9 @@ export type Settings = {
   defaultProfileId: string;
   rememberLayout: boolean;
   startupLayout: StartupLayout;
+  lastCwd?: string | null;
+  savedState?: WorkspaceState | null;
+  namedWorkspaces?: NamedWorkspace[];
 };
 
 export type Pane = {
@@ -35,6 +63,7 @@ export type Pane = {
   sessionId: string;
   sizeRatio: number;
   title?: string;
+  cwd?: string;
 };
 
 export type Tab = {
@@ -62,6 +91,30 @@ export type ExitEvent = {
 export type TitleEvent = {
   sessionId: string;
   title?: string | null;
+};
+
+export type CwdEvent = {
+  sessionId: string;
+  cwd: string;
+};
+
+export type CommandBlockEvent = {
+  sessionId: string;
+  blockId: string;
+  phase: "started" | "output" | "finished";
+  command?: string | null;
+  output?: string | null;
+  cwd?: string | null;
+  exitCode?: number | null;
+};
+
+export type CommandBlock = {
+  id: string;
+  command: string;
+  output: string;
+  cwd?: string;
+  exitCode?: number | null;
+  status: "running" | "finished";
 };
 
 export type ErrorEvent = {

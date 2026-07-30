@@ -1,10 +1,13 @@
-import { useEffect, useRef, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
+import CommandPalette, { type PaletteCommand } from "./components/CommandPalette";
+import HistoryPanel from "./components/HistoryPanel";
 import SettingsPanel from "./components/SettingsPanel";
 import TabBar from "./components/TabBar";
 import TerminalPane from "./components/TerminalPane";
 import TitleBar from "./components/TitleBar";
+import WorkspacePanel from "./components/WorkspacePanel";
 import { closeSession, createSession, listProfiles, listShellProfiles, loadSettings, saveSettings } from "./lib/tauri";
-import type { Pane, Profile, Settings, StartupLayout, Tab } from "./lib/types";
+import type { Pane, Profile, Settings, StartupLayout, Tab, WorkspaceState } from "./lib/types";
 
 const DEFAULT_STARTUP_LAYOUT: StartupLayout = {
   paneCount: 1,
@@ -20,6 +23,7 @@ const DEFAULT_SETTINGS: Settings = {
   defaultProfileId: "pwsh",
   rememberLayout: true,
   startupLayout: DEFAULT_STARTUP_LAYOUT,
+  namedWorkspaces: [],
 };
 
 const PANE_SPLITTER_WIDTH = 10;
@@ -64,6 +68,9 @@ function normalizeSettings(candidate: Settings): Settings {
     defaultProfileId: candidate.defaultProfileId || DEFAULT_SETTINGS.defaultProfileId,
     rememberLayout: candidate.rememberLayout !== false,
     startupLayout: resolveStartupLayout(candidate.startupLayout),
+    lastCwd: candidate.lastCwd || null,
+    savedState: candidate.savedState || null,
+    namedWorkspaces: Array.isArray(candidate.namedWorkspaces) ? candidate.namedWorkspaces : [],
   };
 }
 
@@ -98,6 +105,10 @@ export default function App() {
   const [activeTabId, setActiveTabId] = useState<string | null>(null);
   const [selectedProfileId, setSelectedProfileId] = useState("pwsh");
   const [settingsOpen, setSettingsOpen] = useState(false);
+  const [workspaceOpen, setWorkspaceOpen] = useState(true);
+  const [paletteOpen, setPaletteOpen] = useState(false);
+  const [historyOpen, setHistoryOpen] = useState(false);
+  const [queuedCommand, setQueuedCommand] = useState<{ id: string; value: string; sessionId: string } | null>(null);
   const [booting, setBooting] = useState(true);
   const [bootError, setBootError] = useState<string | null>(null);
   const paneDeckRef = useRef<HTMLDivElement | null>(null);
@@ -151,7 +162,10 @@ export default function App() {
         setProfiles(loadedShells);
         setSettings(resolvedSettings);
         setSelectedProfileId(startupProfileId);
-        await openStartupTab(startupProfileId, loadedShells, resolvedSettings);
+        const restored = await restoreWorkspaceState(loadedShells, resolvedSettings);
+        if (!restored) {
+          await openStartupTab(startupProfileId, loadedShells, resolvedSettings);
+        }
         void hydrateProfiles();
         setBooting(false);
       } catch (error) {
@@ -176,15 +190,28 @@ export default function App() {
       return;
     }
 
-    const settingsToPersist: Settings = settings.rememberLayout
-      ? {
-          ...settings,
-          startupLayout: layoutPreferenceFromTab(activeTab),
-        }
-      : {
-          ...settings,
-          startupLayout: { ...DEFAULT_STARTUP_LAYOUT },
-        };
+    const savedState: Settings["savedState"] =
+      settings.rememberLayout && tabs.length > 0
+        ? {
+            activeTabIndex: Math.max(0, tabs.findIndex((t) => t.id === activeTabId)),
+            tabs: tabs.map((t) => ({
+              profileId: t.profileId,
+              title: t.title,
+              panes: t.panes.map((p) => ({
+                profileId: t.profileId,
+                cwd: p.cwd || null,
+                sizeRatio: p.sizeRatio,
+                title: p.title,
+              })),
+            })),
+          }
+        : null;
+
+    const settingsToPersist: Settings = {
+      ...settings,
+      startupLayout: layoutPreferenceFromTab(activeTab),
+      savedState,
+    };
 
     const timer = window.setTimeout(() => {
       void saveSettings(settingsToPersist).catch((error) => {
@@ -193,7 +220,123 @@ export default function App() {
     }, 250);
 
     return () => window.clearTimeout(timer);
-  }, [activeTab, booting, settings]);
+  }, [activeTab, activeTabId, booting, settings, tabs]);
+
+  async function restoreWorkspaceState(sourceProfiles: Profile[], startupSettings: Settings) {
+    const state = startupSettings.savedState;
+    if (!startupSettings.rememberLayout || !state || !state.tabs || state.tabs.length === 0) {
+      return false;
+    }
+    return restoreWorkspaceSnapshot(state, sourceProfiles, startupSettings);
+  }
+
+  async function restoreWorkspaceSnapshot(state: WorkspaceState, sourceProfiles = profiles, sourceSettings = settings) {
+    const createdSessionIds: string[] = [];
+    try {
+      const restoredTabs: Tab[] = [];
+      for (const savedTab of state.tabs) {
+        const resolvedProfileId = resolveProfileId(savedTab.profileId, sourceProfiles);
+        const tabTitle = savedTab.title || profileLabel(resolvedProfileId, sourceProfiles);
+
+        const restoredPanes: Pane[] = [];
+        for (const savedPane of savedTab.panes) {
+          const paneProfileId = resolveProfileId(savedPane.profileId || resolvedProfileId, sourceProfiles);
+          const paneCwd = savedPane.cwd || sourceSettings.lastCwd || null;
+          const session = await createSession(paneProfileId, 120, 32, paneCwd);
+          createdSessionIds.push(session.sessionId);
+          restoredPanes.push({
+            id: makeId("pane"),
+            sessionId: session.sessionId,
+            sizeRatio: savedPane.sizeRatio ?? 1,
+            title: savedPane.title || profileLabel(paneProfileId, sourceProfiles),
+            cwd: paneCwd || undefined,
+          });
+        }
+
+        if (restoredPanes.length > 0) {
+          restoredTabs.push({
+            id: makeId("tab"),
+            profileId: resolvedProfileId,
+            title: tabTitle,
+            panes: restoredPanes,
+            activePaneId: restoredPanes[0].id,
+          });
+        }
+      }
+
+      if (restoredTabs.length > 0) {
+        const activeIdx = Math.min(Math.max(0, state.activeTabIndex || 0), restoredTabs.length - 1);
+        setTabs(restoredTabs);
+        setActiveTabId(restoredTabs[activeIdx].id);
+        setSelectedProfileId(restoredTabs[activeIdx].profileId);
+        setBootError(null);
+        return true;
+      }
+    } catch (error) {
+      await Promise.all(createdSessionIds.map((sessionId) => closeSession(sessionId).catch(() => undefined)));
+      console.warn("Failed to restore saved workspace state", error);
+    }
+    return false;
+  }
+
+  function snapshotWorkspace(): WorkspaceState | null {
+    if (tabs.length === 0) {
+      return null;
+    }
+    return {
+      activeTabIndex: Math.max(0, tabs.findIndex((tab) => tab.id === activeTabId)),
+      tabs: tabs.map((tab) => ({
+        profileId: tab.profileId,
+        title: tab.title,
+        panes: tab.panes.map((pane) => ({
+          profileId: tab.profileId,
+          cwd: pane.cwd || null,
+          sizeRatio: pane.sizeRatio,
+          title: pane.title,
+        })),
+      })),
+    };
+  }
+
+  function saveNamedWorkspace() {
+    const state = snapshotWorkspace();
+    if (!state) {
+      return;
+    }
+    const proposed = window.prompt("Workspace name", activeTab?.title || "My Workspace")?.trim();
+    if (!proposed) {
+      return;
+    }
+    setSettings((current) => ({
+      ...current,
+      namedWorkspaces: [
+        { id: makeId("workspace"), name: proposed, state, updatedAt: new Date().toISOString() },
+        ...(current.namedWorkspaces || []),
+      ],
+    }));
+  }
+
+  async function loadNamedWorkspace(workspaceId: string) {
+    const workspace = settings.namedWorkspaces?.find((item) => item.id === workspaceId);
+    if (!workspace) {
+      return;
+    }
+    const oldTabs = tabs;
+    const restored = await restoreWorkspaceSnapshot(workspace.state);
+    if (!restored) {
+      setBootError(`Could not open workspace: ${workspace.name}`);
+      return;
+    }
+    await Promise.all(oldTabs.flatMap((tab) => tab.panes).map((pane) => closeSession(pane.sessionId).catch(() => undefined)));
+    setWorkspaceOpen(false);
+  }
+
+  function deleteNamedWorkspace(workspaceId: string) {
+    setSettings((current) => ({
+      ...current,
+      namedWorkspaces: (current.namedWorkspaces || []).filter((item) => item.id !== workspaceId),
+    }));
+  }
 
   useEffect(() => {
     const onMouseMove = (event: MouseEvent) => {
@@ -252,25 +395,46 @@ export default function App() {
         void splitActiveTab();
       }
 
+      if (event.ctrlKey && event.shiftKey && event.key.toLowerCase() === "p") {
+        event.preventDefault();
+        setPaletteOpen((current) => !current);
+      }
+
+      if (event.ctrlKey && event.shiftKey && event.key.toLowerCase() === "r") {
+        event.preventDefault();
+        setHistoryOpen((current) => !current);
+      }
+
+      if (event.ctrlKey && event.key.toLowerCase() === "b") {
+        event.preventDefault();
+        setWorkspaceOpen((current) => !current);
+      }
+
       if (event.ctrlKey && event.key === ",") {
         event.preventDefault();
         setSettingsOpen((current) => !current);
       }
     };
 
-    window.addEventListener("keydown", onKeyDown);
-    return () => window.removeEventListener("keydown", onKeyDown);
+    window.addEventListener("keydown", onKeyDown, true);
+    return () => window.removeEventListener("keydown", onKeyDown, true);
   }, [activeTabId, selectedProfileId]);
 
-  async function createTab(profileId: string, sourceProfiles: Profile[], layout = DEFAULT_STARTUP_LAYOUT) {
+  async function createTab(
+    profileId: string,
+    sourceProfiles: Profile[],
+    layout = DEFAULT_STARTUP_LAYOUT,
+    initialCwd?: string | null,
+  ) {
     const resolvedProfileId = resolveProfileId(profileId, sourceProfiles);
     const profileName = profileLabel(resolvedProfileId, sourceProfiles);
-    const primarySession = await createSession(resolvedProfileId, 120, 32);
+    const primarySession = await createSession(resolvedProfileId, 120, 32, initialCwd);
     const primaryPane: Pane = {
       id: makeId("pane"),
       sessionId: primarySession.sessionId,
       sizeRatio: 1,
       title: profileName,
+      cwd: initialCwd || undefined,
     };
 
     if (layout.paneCount !== 2) {
@@ -286,13 +450,14 @@ export default function App() {
       };
     }
 
-    const secondarySession = await createSession(resolvedProfileId, 120, 32);
+    const secondarySession = await createSession(resolvedProfileId, 120, 32, initialCwd);
     const splitRatio = normalizeSplitRatio(layout.splitRatio);
     const secondaryPane: Pane = {
       id: makeId("pane"),
       sessionId: secondarySession.sessionId,
       sizeRatio: 1 - splitRatio,
       title: profileName,
+      cwd: initialCwd || undefined,
     };
 
     return {
@@ -311,7 +476,12 @@ export default function App() {
     const startupLayout = startupSettings.rememberLayout
       ? resolveStartupLayout(startupSettings.startupLayout)
       : { ...DEFAULT_STARTUP_LAYOUT };
-    const { resolvedProfileId, nextTab } = await createTab(profileId, sourceProfiles, startupLayout);
+    const { resolvedProfileId, nextTab } = await createTab(
+      profileId,
+      sourceProfiles,
+      startupLayout,
+      startupSettings.lastCwd,
+    );
 
     setTabs([nextTab]);
     setActiveTabId(nextTab.id);
@@ -321,7 +491,9 @@ export default function App() {
 
   async function openTab(profileId = selectedProfileId, sourceProfiles = profiles) {
     try {
-      const { resolvedProfileId, nextTab } = await createTab(profileId, sourceProfiles);
+      const activePane = activeTab?.panes.find((pane) => pane.id === activeTab.activePaneId);
+      const targetCwd = activePane?.cwd || settings.lastCwd || null;
+      const { resolvedProfileId, nextTab } = await createTab(profileId, sourceProfiles, DEFAULT_STARTUP_LAYOUT, targetCwd);
 
       setTabs((current) => [...current, nextTab]);
       setActiveTabId(nextTab.id);
@@ -339,13 +511,16 @@ export default function App() {
     }
 
     try {
-      const result = await createSession(activeTab.profileId, 120, 32);
+      const activePane = activeTab.panes.find((pane) => pane.id === activeTab.activePaneId);
+      const targetCwd = activePane?.cwd || settings.lastCwd || null;
+      const result = await createSession(activeTab.profileId, 120, 32, targetCwd);
       const profileName = profileLabel(activeTab.profileId, profiles);
       const nextPane: Pane = {
         id: makeId("pane"),
         sessionId: result.sessionId,
         sizeRatio: 0.5,
         title: profileName,
+        cwd: targetCwd || undefined,
       };
 
       setTabs((current) =>
@@ -456,6 +631,35 @@ export default function App() {
     );
   }
 
+  function updatePaneCwd(sessionId: string, nextCwd: string) {
+    const normalized = nextCwd.trim();
+    if (!normalized) {
+      return;
+    }
+
+    setSettings((current) => ({
+      ...current,
+      lastCwd: normalized,
+    }));
+
+    setTabs((current) =>
+      current.map((tab) => {
+        const matchesPane = tab.panes.some((pane) => pane.sessionId === sessionId);
+        if (!matchesPane) {
+          return tab;
+        }
+
+        const updatedPanes = tab.panes.map((pane) =>
+          pane.sessionId === sessionId ? { ...pane, cwd: normalized } : pane,
+        );
+        return {
+          ...tab,
+          panes: updatedPanes,
+        };
+      }),
+    );
+  }
+
   function focusPane(tabId: string, paneId: string) {
     setTabs((current) =>
       current.map((tab) =>
@@ -469,6 +673,41 @@ export default function App() {
     );
     setActiveTabId(tabId);
   }
+
+  function runCommandFromHistory(command: string) {
+    const targetPane = activeTab?.panes.find((pane) => pane.id === activeTab.activePaneId);
+    if (!targetPane) {
+      setBootError("Open a terminal before running a history command.");
+      return;
+    }
+    setQueuedCommand({ id: makeId("command"), value: command, sessionId: targetPane.sessionId });
+  }
+
+  const paletteCommands = useMemo<PaletteCommand[]>(() => {
+    const base: PaletteCommand[] = [
+      { id: "new-tab", label: "New terminal tab", description: "Open the selected shell profile", shortcut: "Ctrl T", keywords: "shell terminal", run: () => void openTab(selectedProfileId) },
+      { id: "split", label: "Split active pane", description: "Create a second terminal pane", shortcut: "Ctrl Shift D", run: () => void splitActiveTab() },
+      { id: "save-workspace", label: "Save current workspace", description: "Store tabs, panes, and directories", keywords: "session layout", run: saveNamedWorkspace },
+      { id: "history", label: "Open command history", description: "Search, copy, or rerun commands", shortcut: "Ctrl Shift R", run: () => setHistoryOpen(true) },
+      { id: "sidebar", label: workspaceOpen ? "Hide workspace sidebar" : "Show workspace sidebar", description: "Toggle workspace and tab navigation", shortcut: "Ctrl B", run: () => setWorkspaceOpen((current) => !current) },
+      { id: "settings", label: "Open settings", description: "Theme, font, cursor, and startup shell", shortcut: "Ctrl ,", run: () => setSettingsOpen(true) },
+    ];
+    const profileCommands = profiles.map((profile) => ({
+      id: `profile-${profile.id}`,
+      label: `Open ${profile.name}`,
+      description: profile.description,
+      keywords: `${profile.category} profile claude shell`,
+      run: () => void openTab(profile.id),
+    }));
+    const workspaceCommands = (settings.namedWorkspaces || []).map((workspace) => ({
+      id: `workspace-${workspace.id}`,
+      label: `Switch to ${workspace.name}`,
+      description: `${workspace.state.tabs.length} saved tabs`,
+      keywords: "workspace session layout",
+      run: () => void loadNamedWorkspace(workspace.id),
+    }));
+    return [...base, ...profileCommands, ...workspaceCommands];
+  }, [profiles, selectedProfileId, settings.namedWorkspaces, workspaceOpen, activeTabId, tabs]);
 
   const paneGridStyle =
     activeTab && activeTab.panes.length === 2
@@ -497,9 +736,26 @@ export default function App() {
         onLaunchProfile={(profileId) => void openTab(profileId)}
         onNewTab={() => void openTab(selectedProfileId)}
         onSplit={() => void splitActiveTab()}
+        onToggleWorkspaces={() => setWorkspaceOpen((current) => !current)}
         onToggleSettings={() => setSettingsOpen((current) => !current)}
       />
 
+      <div className={`app-body ${workspaceOpen ? "has-sidebar" : ""}`}>
+        <WorkspacePanel
+          open={workspaceOpen}
+          workspaces={settings.namedWorkspaces || []}
+          tabs={tabs}
+          activeTabId={activeTabId}
+          onClose={() => setWorkspaceOpen(false)}
+          onSaveCurrent={saveNamedWorkspace}
+          onLoad={(workspaceId) => void loadNamedWorkspace(workspaceId)}
+          onDelete={deleteNamedWorkspace}
+          onSelectTab={setActiveTabId}
+          onOpenPalette={() => setPaletteOpen(true)}
+          onOpenHistory={() => setHistoryOpen(true)}
+        />
+
+        <div className="app-main-content">
       <TabBar
         tabs={tabs}
         activeTabId={activeTabId}
@@ -557,7 +813,9 @@ export default function App() {
                   active={activeTab.activePaneId === pane.id}
                   onActivate={() => focusPane(activeTab.id, pane.id)}
                   onTitleChange={(title) => updatePaneTitle(pane.sessionId, title)}
+                  onCwdChange={(cwd) => updatePaneCwd(pane.sessionId, cwd)}
                   onFontDelta={fontDeltaHandler}
+                  queuedCommand={queuedCommand}
                 />
               </div>
             ))}
@@ -579,6 +837,11 @@ export default function App() {
           </div>
         )}
       </section>
+        </div>
+      </div>
+
+      <CommandPalette open={paletteOpen} commands={paletteCommands} onClose={() => setPaletteOpen(false)} />
+      <HistoryPanel open={historyOpen} onClose={() => setHistoryOpen(false)} onRun={runCommandFromHistory} />
 
       <SettingsPanel
         profiles={profiles}
