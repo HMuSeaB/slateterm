@@ -146,6 +146,7 @@ impl Default for Settings {
 #[serde(rename_all = "camelCase")]
 pub struct CreateSessionResponse {
     pub session_id: String,
+    pub cwd: Option<String>,
 }
 
 #[derive(Debug, Clone, Serialize)]

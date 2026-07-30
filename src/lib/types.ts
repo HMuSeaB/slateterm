@@ -89,6 +89,7 @@ export type FilePreview = {
 
 export type CreateSessionResponse = {
   sessionId: string;
+  cwd?: string | null;
 };
 
 export type OutputEvent = {

@@ -268,16 +268,65 @@ button {
 }
 
 .app-main-content {
+  position: relative;
   display: grid;
   grid-template-rows: 48px minmax(0, 1fr);
-}
-
-.app-main-content.has-terminal {
-  grid-template-rows: 48px minmax(120px, 1fr) minmax(0, 1.15fr);
   min-width: 0;
   min-height: 0;
   overflow: hidden;
   background: #0c1016;
+}
+
+.terminal-context-bar {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  padding: 6px 12px;
+  border-bottom: 1px solid rgba(255, 255, 255, 0.055);
+  background: rgba(8, 12, 17, 0.72);
+}
+
+.terminal-context-bar > div {
+  display: flex;
+  align-items: center;
+  min-width: 0;
+  gap: 8px;
+}
+
+.terminal-context-bar strong,
+.terminal-context-bar span {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.terminal-context-bar strong {
+  flex: 0 0 auto;
+  font-size: 12px;
+}
+
+.terminal-context-bar span:not(.context-status-dot) {
+  color: #71808a;
+  font-size: 10px;
+}
+
+.terminal-context-bar > div:last-child {
+  flex: 0 0 auto;
+}
+
+.terminal-context-bar .ghost-button {
+  padding: 7px 10px;
+  border-radius: 8px;
+  font-size: 11px;
+}
+
+.context-status-dot {
+  width: 7px;
+  height: 7px;
+  flex: 0 0 7px;
+  border-radius: 50%;
+  background: #54b5b0;
 }
 
 .editor-toolbar {
@@ -419,7 +468,41 @@ button {
   min-width: 0;
   min-height: 0;
   overflow: hidden;
-  border-top: 1px solid rgba(255, 255, 255, 0.07);
+}
+
+.context-preview-panel {
+  position: absolute;
+  z-index: 8;
+  top: 56px;
+  right: 12px;
+  bottom: 12px;
+  width: min(520px, calc(100% - 56px));
+  overflow: hidden;
+  border: 1px solid rgba(84, 181, 176, 0.22);
+  border-radius: 12px;
+  background: #0d1219;
+}
+
+.context-preview-close {
+  position: absolute;
+  z-index: 2;
+  top: 8px;
+  right: 8px;
+  display: grid;
+  width: 26px;
+  height: 26px;
+  padding: 0;
+  place-items: center;
+  border: 1px solid rgba(255, 255, 255, 0.08);
+  border-radius: 7px;
+  color: #aab5bb;
+  background: #151b23;
+}
+
+.context-preview-panel .file-preview,
+.context-preview-panel .editor-message {
+  height: 100%;
+  background: #0d1219;
 }
 
 .tabbar {
@@ -478,7 +561,7 @@ button {
   gap: 8px;
   min-height: 0;
   overflow: hidden;
-  padding: 10px 12px 12px;
+  padding: 8px 10px 10px;
 }
 
 .boot-error-banner {
@@ -603,11 +686,10 @@ button {
   min-height: 0;
   height: 100%;
   display: grid;
-  border: 1px solid rgba(255, 255, 255, 0.06);
-  border-radius: 12px;
+  border: 1px solid rgba(255, 255, 255, 0.055);
+  border-radius: 8px;
   overflow: hidden;
   background: rgba(5, 8, 12, 0.72);
-  box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.04);
 }
 
 .theme-paper .terminal-shell {
@@ -615,10 +697,8 @@ button {
 }
 
 .terminal-shell.is-active {
-  border-color: rgba(84, 181, 176, 0.38);
-  box-shadow:
-    0 0 0 1px rgba(84, 181, 176, 0.12),
-    0 18px 50px rgba(0, 0, 0, 0.18);
+  border-color: rgba(84, 181, 176, 0.34);
+  box-shadow: inset 2px 0 0 rgba(84, 181, 176, 0.55);
 }
 
 .terminal-surface,

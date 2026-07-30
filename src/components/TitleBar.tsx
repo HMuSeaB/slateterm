@@ -30,7 +30,7 @@ export default function TitleBar({
           <div className="brand-mark" />
           <div className="brand-copy">
             <strong>SlateTerm</strong>
-            <span>Local-first Windows terminal</span>
+            <span>Workspace-aware AI terminal</span>
           </div>
         </div>
         <span className="brand-badge">Local</span>

@@ -66,15 +66,21 @@ impl SessionManager {
         for arg in profile.args {
             command.arg(arg);
         }
-        if let Some(ref custom_cwd) = cwd {
-            if Path::new(custom_cwd).exists() {
-                command.cwd(custom_cwd);
-            } else if let Some(profile_cwd) = profile.cwd {
-                command.cwd(profile_cwd);
+        let resolved_cwd = if let Some(ref custom_cwd) = cwd {
+            let path = Path::new(custom_cwd);
+            if !path.is_dir() {
+                return Err(format!(
+                    "Terminal working directory is not a directory: {custom_cwd}"
+                ));
             }
+            command.cwd(custom_cwd);
+            Some(custom_cwd.clone())
         } else if let Some(profile_cwd) = profile.cwd {
-            command.cwd(profile_cwd);
-        }
+            command.cwd(&profile_cwd);
+            Some(profile_cwd)
+        } else {
+            None
+        };
 
         let child = pair
             .slave
@@ -170,7 +176,10 @@ impl SessionManager {
                 },
             );
 
-        Ok(CreateSessionResponse { session_id })
+        Ok(CreateSessionResponse {
+            session_id,
+            cwd: resolved_cwd,
+        })
     }
 
     pub fn write_input(&self, session_id: &str, data: &str) -> Result<(), String> {

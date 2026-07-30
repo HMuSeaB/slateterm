@@ -1,4 +1,5 @@
 import { listen } from "@tauri-apps/api/event";
+import { getCurrentWebview } from "@tauri-apps/api/webview";
 import { useEffect, useRef, useState } from "react";
 import { FitAddon } from "@xterm/addon-fit";
 import { SearchAddon } from "@xterm/addon-search";
@@ -7,10 +8,13 @@ import { Terminal } from "@xterm/xterm";
 import "@xterm/xterm/css/xterm.css";
 import { getSuggestion, recordCommand, type SuggestionResult } from "../lib/completionEngine";
 import {
+  clipboardHasImage,
   openExternalUrl,
   readClipboardImage,
   readClipboardText,
   resizeSession,
+  saveTempImage,
+  writeClipboardImageFile,
   writeClipboardText,
   writeInput,
 } from "../lib/tauri";
@@ -28,6 +32,7 @@ import type {
 type Props = {
   sessionId: string;
   settings: Settings;
+  profileCategory: "shell" | "ai";
   active: boolean;
   onActivate: () => void;
   onTitleChange: (title: string) => void;
@@ -48,6 +53,36 @@ type StatusBanner = {
   tone: "info" | "error";
   message: string;
 };
+
+const CLAUDE_IMAGE_ATTACH_SEQUENCE = "\x1bv";
+const ATTACHABLE_IMAGE_EXTENSIONS = new Set(["png", "bmp"]);
+const IMAGE_PATH_EXTENSIONS = new Set(["png", "bmp", "jpg", "jpeg", "gif", "webp"]);
+
+function imageExtension(path: string) {
+  const normalized = path.split(/[?#]/, 1)[0];
+  const filename = normalized.split(/[\\/]/).slice(-1)[0] ?? "";
+  const dotIndex = filename.lastIndexOf(".");
+  return dotIndex >= 0 ? filename.slice(dotIndex + 1).toLowerCase() : "";
+}
+
+function isAttachableImagePath(path: string) {
+  return ATTACHABLE_IMAGE_EXTENSIONS.has(imageExtension(path));
+}
+
+function isImagePath(path: string) {
+  return IMAGE_PATH_EXTENSIONS.has(imageExtension(path));
+}
+
+function formatTerminalPaths(paths: string[]) {
+  return paths.map((path) => (path.includes(" ") ? `"${path}"` : path)).join(" ");
+}
+
+function isClaudeCommand(command: string) {
+  const normalized = command.trim().toLowerCase();
+  return /(?:^|[;&|]\s*)(?:&\s*)?(?:claude(?:\.cmd|\.exe)?|["'][^"']*[\\/]claude(?:\.cmd|\.exe)?["'])(?:\s|$)/.test(
+    normalized,
+  );
+}
 
 function themeForMode(theme: Settings["theme"]) {
   if (theme === "paper") {
@@ -104,6 +139,7 @@ function themeForMode(theme: Settings["theme"]) {
 export default function TerminalPane({
   sessionId,
   settings,
+  profileCategory,
   active,
   onActivate,
   onTitleChange,
@@ -130,8 +166,16 @@ export default function TerminalPane({
   const [inputBuffer, setInputBuffer] = useState("");
   const [suggestion, setSuggestion] = useState<SuggestionResult | null>(null);
   const [isDragging, setIsDragging] = useState(false);
+  const [runtimeMode, setRuntimeMode] = useState<"shell" | "claude">(
+    profileCategory === "ai" ? "claude" : "shell",
+  );
   const suggestionRef = useRef<SuggestionResult | null>(null);
   const inputBufferRef = useRef("");
+  const activeRef = useRef(active);
+  const profileCategoryRef = useRef(profileCategory);
+  const runtimeModeRef = useRef<"shell" | "claude">(profileCategory === "ai" ? "claude" : "shell");
+  const nativeDragActiveRef = useRef(false);
+  const lastNativeDropRef = useRef(0);
 
   useEffect(() => {
     onFontDeltaRef.current = onFontDelta;
@@ -144,6 +188,27 @@ export default function TerminalPane({
   useEffect(() => {
     onCwdChangeRef.current = onCwdChange;
   }, [onCwdChange]);
+
+  useEffect(() => {
+    activeRef.current = active;
+  }, [active]);
+
+  useEffect(() => {
+    profileCategoryRef.current = profileCategory;
+    if (profileCategory === "ai") {
+      runtimeModeRef.current = "claude";
+      setRuntimeMode("claude");
+    }
+  }, [profileCategory]);
+
+  function setPaneRuntimeMode(mode: "shell" | "claude") {
+    runtimeModeRef.current = mode;
+    setRuntimeMode(mode);
+  }
+
+  function isClaudeRuntime() {
+    return profileCategoryRef.current === "ai" || runtimeModeRef.current === "claude";
+  }
 
   function focusTerminal() {
     bindingRef.current?.terminal.focus();
@@ -177,30 +242,102 @@ export default function TerminalPane({
     setSuggestion(nextSugg);
   }
 
+  async function attachClipboardImageToClaude(message = "Attaching image to Claude Code...") {
+    setSessionStatus({ tone: "info", message });
+    await writeInput(sessionId, CLAUDE_IMAGE_ATTACH_SEQUENCE);
+  }
+
+  async function attachImageFileToClaude(path: string) {
+    setSessionStatus({ tone: "info", message: "Preparing dropped image for Claude Code..." });
+    await writeClipboardImageFile(path);
+    await attachClipboardImageToClaude("Attaching dropped image to Claude Code...");
+  }
+
+  async function handleDroppedPaths(paths: string[]) {
+    if (paths.length === 0) {
+      return;
+    }
+
+    if (paths.length === 1 && isAttachableImagePath(paths[0])) {
+      if (!isClaudeRuntime()) {
+        throw new Error("Start Claude Code before dropping an image attachment.");
+      }
+      await attachImageFileToClaude(paths[0]);
+      return;
+    }
+    const imagePaths = paths.filter(isImagePath);
+    if (imagePaths.length > 0) {
+      throw new Error(
+        isAttachableImagePath(imagePaths[0])
+          ? "Drop one PNG or BMP image at a time to attach it to Claude Code."
+          : "Convert this image to PNG or BMP before attaching it.",
+      );
+    }
+
+    const formattedPaths = formatTerminalPaths(paths);
+    setSessionStatus({ tone: "info", message: `Pasted path: ${formattedPaths}` });
+    updateBuffer(inputBufferRef.current + formattedPaths);
+    await writeInput(sessionId, formattedPaths);
+  }
+
+  function handlePasteCapture(event: React.ClipboardEvent<HTMLDivElement>) {
+    const eventText = event.clipboardData.getData("text/plain");
+    const imageFile = Array.from(event.clipboardData.items)
+      .find((item) => item.kind === "file" && item.type.startsWith("image/"))
+      ?.getAsFile();
+    event.preventDefault();
+    event.stopPropagation();
+    void (async () => {
+      if (await clipboardHasImage()) {
+        if (!isClaudeRuntime()) {
+          throw new Error("Start Claude Code before attaching a clipboard image.");
+        }
+        await attachClipboardImageToClaude("Attaching clipboard history image to Claude Code...");
+        return;
+      }
+      if (imageFile) {
+        if (!isClaudeRuntime()) {
+          throw new Error("Start Claude Code before attaching a clipboard image.");
+        }
+        const extension = imageFile.type === "image/bmp" ? "bmp" : "png";
+        const imagePath = await saveTempImage(new Uint8Array(await imageFile.arrayBuffer()), extension);
+        await attachImageFileToClaude(imagePath);
+        return;
+      }
+      const text = eventText || (await readClipboardText());
+      if (text) {
+        setSessionStatus(null);
+        updateBuffer(inputBufferRef.current + text.replace(/[\x00-\x1F\x7F-\x9F]/g, ""));
+        await writeInput(sessionId, text);
+      }
+    })().catch((error) =>
+      setSessionStatus({ tone: "error", message: `Paste failed: ${String(error)}` }),
+    );
+  }
+
   function handleDragOver(event: React.DragEvent<HTMLDivElement>) {
     event.preventDefault();
     if (!isDragging) setIsDragging(true);
   }
 
   function handleDragLeave() {
-    setIsDragging(false);
+    if (!nativeDragActiveRef.current) {
+      setIsDragging(false);
+    }
   }
 
   function handleDrop(event: React.DragEvent<HTMLDivElement>) {
     event.preventDefault();
     setIsDragging(false);
-    const files = Array.from(event.dataTransfer.files);
-    if (files.length > 0) {
-      const paths = files
-        .map((f) => {
-          const path = (f as any).path || f.name;
-          return path.includes(" ") ? `"${path}"` : path;
-        })
-        .join(" ");
-      setSessionStatus({ tone: "info", message: `Pasted path: ${paths}` });
-      updateBuffer(inputBufferRef.current + paths);
-      void writeInput(sessionId, paths);
+    if (nativeDragActiveRef.current || performance.now() - lastNativeDropRef.current < 500) {
+      return;
     }
+    const paths = Array.from(event.dataTransfer.files)
+      .map((file) => (file as File & { path?: string }).path)
+      .filter((path): path is string => Boolean(path));
+    void handleDroppedPaths(paths).catch((error) =>
+      setSessionStatus({ tone: "error", message: `Drop failed: ${String(error)}` }),
+    );
   }
 
   function fitTerminal(reason: string) {
@@ -382,9 +519,35 @@ export default function TerminalPane({
         }
       }
 
-      // Explicit paste-as-path mode for ordinary shells and CLIs. Regular
-      // Ctrl+V remains untouched so foreground TUIs can implement richer
-      // clipboard semantics, including native image attachments.
+      if (event.ctrlKey && !event.shiftKey && !event.altKey && key === "v") {
+        event.preventDefault();
+        void clipboardHasImage()
+          .then(async (hasImage) => {
+            if (hasImage) {
+              if (!isClaudeRuntime()) {
+                setSessionStatus({
+                  tone: "error",
+                  message: "Clipboard contains an image. Start Claude Code first, or use Ctrl+Shift+V to paste its path.",
+                });
+                return;
+              }
+              await attachClipboardImageToClaude("Attaching clipboard image to Claude Code...");
+              return;
+            }
+            const text = await readClipboardText();
+            if (text) {
+              setSessionStatus(null);
+              updateBuffer(inputBufferRef.current + text.replace(/[\x00-\x1F\x7F-\x9F]/g, ""));
+              await writeInput(sessionId, text);
+            }
+          })
+          .catch((error) => setSessionStatus({ tone: "error", message: `Paste failed: ${String(error)}` }));
+        return false;
+      }
+
+      // Explicit paste-as-path mode for ordinary shells and CLIs. AI sessions
+      // use Ctrl+V above to distinguish text paste from Claude's Windows
+      // image-attachment shortcut.
       if ((event.ctrlKey && event.shiftKey && key === "v") || (event.shiftKey && event.key === "Insert")) {
         event.preventDefault();
         void readClipboardImage()
@@ -542,6 +705,16 @@ export default function TerminalPane({
         return;
       }
       const blockEvent = event.payload;
+      if (blockEvent.phase === "started" && blockEvent.command && isClaudeCommand(blockEvent.command)) {
+        setPaneRuntimeMode("claude");
+      }
+      if (
+        blockEvent.phase === "finished" &&
+        runtimeModeRef.current === "claude" &&
+        profileCategoryRef.current !== "ai"
+      ) {
+        setPaneRuntimeMode("shell");
+      }
       setCommandBlocks((current) => {
         if (blockEvent.phase === "started") {
           const next = [
@@ -573,17 +746,26 @@ export default function TerminalPane({
       });
     });
 
-    const unlistenDrop = listen<{ paths: string[] }>("tauri://drag-drop", (event) => {
-      if (!mounted || !event.payload.paths || event.payload.paths.length === 0) {
+    const unlistenDrop = getCurrentWebview().onDragDropEvent((event) => {
+      if (!mounted || !activeRef.current) {
         return;
       }
+      if (event.payload.type === "enter" || event.payload.type === "over") {
+        nativeDragActiveRef.current = true;
+        setIsDragging(true);
+        return;
+      }
+      if (event.payload.type === "leave") {
+        nativeDragActiveRef.current = false;
+        setIsDragging(false);
+        return;
+      }
+      nativeDragActiveRef.current = false;
+      lastNativeDropRef.current = performance.now();
       setIsDragging(false);
-      const formattedPaths = event.payload.paths
-        .map((p) => (p.includes(" ") ? `"${p}"` : p))
-        .join(" ");
-      setSessionStatus({ tone: "info", message: `Pasted path: ${formattedPaths}` });
-      updateBuffer(inputBufferRef.current + formattedPaths);
-      void writeInput(sessionId, formattedPaths);
+      void handleDroppedPaths(event.payload.paths).catch((error) =>
+        setSessionStatus({ tone: "error", message: `Drop failed: ${String(error)}` }),
+      );
     });
 
     return () => {
@@ -602,6 +784,7 @@ export default function TerminalPane({
     <section
       className={`terminal-shell ${active ? "is-active" : ""}`}
       onMouseDown={onActivate}
+      onPasteCapture={handlePasteCapture}
       onDragOver={handleDragOver}
       onDragLeave={handleDragLeave}
       onDrop={handleDrop}
@@ -610,8 +793,12 @@ export default function TerminalPane({
         {isDragging && (
           <div className="drag-drop-overlay">
             <div className="drop-badge">
-              <strong>DROP FILE OR IMAGE HERE</strong>
-              <span>Path will be pasted into terminal</span>
+              <strong>{runtimeMode === "claude" ? "DROP IMAGE FOR CLAUDE" : "DROP FILE INTO TERMINAL"}</strong>
+              <span>
+                {runtimeMode === "claude"
+                  ? "PNG or BMP becomes an image attachment; other files paste as paths"
+                  : "Start Claude Code before dropping an image attachment"}
+              </span>
             </div>
           </div>
         )}

@@ -120,7 +120,6 @@ export default function App() {
   const [workspaceOpen, setWorkspaceOpen] = useState(true);
   const [paletteOpen, setPaletteOpen] = useState(false);
   const [historyOpen, setHistoryOpen] = useState(false);
-  const [terminalPanelOpen, setTerminalPanelOpen] = useState(true);
   const [selectedExplorerPath, setSelectedExplorerPath] = useState<string | null>(null);
   const [terminalCwd, setTerminalCwd] = useState<string | null>(null);
   const [filePreview, setFilePreview] = useState<FilePreviewData | null>(null);
@@ -132,6 +131,8 @@ export default function App() {
   const dragStateRef = useRef<{ tabId: string } | null>(null);
 
   const activeTab = tabs.find((tab) => tab.id === activeTabId) ?? null;
+  const activeProfileCategory = profiles.find((profile) => profile.id === activeTab?.profileId)?.category ?? "shell";
+  const claudeProfile = profiles.find((profile) => profile.id === "claude") ?? null;
 
   useEffect(() => {
     let cancelled = false;
@@ -450,7 +451,7 @@ export default function App() {
       sessionId: primarySession.sessionId,
       sizeRatio: 1,
       title: profileName,
-      cwd: initialCwd || undefined,
+      cwd: primarySession.cwd || initialCwd || undefined,
     };
 
     if (layout.paneCount !== 2) {
@@ -473,7 +474,7 @@ export default function App() {
       sessionId: secondarySession.sessionId,
       sizeRatio: 1 - splitRatio,
       title: profileName,
-      cwd: initialCwd || undefined,
+      cwd: secondarySession.cwd || initialCwd || undefined,
     };
 
     return {
@@ -508,7 +509,7 @@ export default function App() {
   async function openTab(profileId = selectedProfileId, sourceProfiles = profiles, explicitCwd?: string | null) {
     try {
       const activePane = activeTab?.panes.find((pane) => pane.id === activeTab.activePaneId);
-      const targetCwd = explicitCwd || activePane?.cwd || settings.workspaceRoot || settings.lastCwd || null;
+      const targetCwd = explicitCwd ?? settings.workspaceRoot ?? activePane?.cwd ?? settings.lastCwd ?? null;
       const { resolvedProfileId, nextTab } = await createTab(profileId, sourceProfiles, DEFAULT_STARTUP_LAYOUT, targetCwd);
 
       setTabs((current) => [...current, nextTab]);
@@ -555,9 +556,13 @@ export default function App() {
     setFilePreviewError(null);
   }
 
-  async function openWorkspaceTerminal() {
-    setTerminalPanelOpen(true);
-    await openTab(selectedProfileId, profiles, terminalCwd || settings.workspaceRoot || null);
+  async function openWorkspaceTerminal(profileId = selectedProfileId) {
+    const workspaceCwd = terminalCwd || settings.workspaceRoot || null;
+    if (!workspaceCwd) {
+      setBootError("Choose a workspace folder before opening a workspace terminal.");
+      return;
+    }
+    await openTab(profileId, profiles, workspaceCwd);
   }
 
   async function splitActiveTab() {
@@ -575,7 +580,7 @@ export default function App() {
         sessionId: result.sessionId,
         sizeRatio: 0.5,
         title: profileName,
-        cwd: targetCwd || undefined,
+        cwd: result.cwd || targetCwd || undefined,
       };
 
       setTabs((current) =>
@@ -788,7 +793,7 @@ export default function App() {
         profiles={profiles}
         selectedProfileId={selectedProfileId}
         onSelectedProfileChange={setSelectedProfileId}
-        onNewTab={() => void openTab(selectedProfileId)}
+        onNewTab={() => void openTab(selectedProfileId, profiles, settings.workspaceRoot || null)}
         onOpenPalette={() => setPaletteOpen(true)}
         onSplit={() => void splitActiveTab()}
         onToggleWorkspaces={() => setWorkspaceOpen((current) => !current)}
@@ -813,95 +818,99 @@ export default function App() {
           onOpenHistory={() => setHistoryOpen(true)}
         />
 
-        <div className={`app-main-content ${terminalPanelOpen ? "has-terminal" : ""}`}>
-          <div className="editor-toolbar">
+        <div className={`app-main-content ${filePreview || filePreviewError ? "has-context-preview" : ""}`}>
+          <div className="terminal-context-bar">
             <div>
-              <strong>{filePreview?.path.split(/[\\/]/).pop() || settings.workspaceRoot?.split(/[\\/]/).filter(Boolean).slice(-1)[0] || "SlateTerm"}</strong>
-              <span>{filePreview?.path || settings.workspaceRoot || "No folder open"}</span>
+              <span className="context-status-dot" />
+              <strong>{settings.workspaceRoot?.split(/[\\/]/).filter(Boolean).slice(-1)[0] || "No workspace"}</strong>
+              <span>{settings.workspaceRoot || "Choose a folder to give AI sessions project context"}</span>
             </div>
             <div>
               <button type="button" className="ghost-button" onClick={() => void chooseWorkspaceFolder()}>Open folder</button>
-              <button type="button" className="ghost-button" onClick={() => setTerminalPanelOpen((current) => !current)}>
-                {terminalPanelOpen ? "Hide terminal" : "Show terminal"}
-              </button>
+              <button type="button" className="ghost-button" disabled={!settings.workspaceRoot || !claudeProfile} onClick={() => void openWorkspaceTerminal("claude")}>Claude here</button>
+              <button type="button" className="ghost-button" disabled={!settings.workspaceRoot} onClick={() => void openWorkspaceTerminal(selectedProfileId)}>Shell here</button>
             </div>
           </div>
 
-          <FilePreview
-            workspaceRoot={settings.workspaceRoot}
-            preview={filePreview}
-            error={filePreviewError}
-            onChooseFolder={() => void chooseWorkspaceFolder()}
-            onOpenTerminal={() => void openWorkspaceTerminal()}
-          />
+          <section className="terminal-panel">
+            <TabBar
+              tabs={tabs}
+              activeTabId={activeTabId}
+              onSelect={setActiveTabId}
+              onClose={(tabId) => void closeTab(tabId)}
+            />
 
-          {terminalPanelOpen && (
-            <section className="terminal-panel">
-              <TabBar
-                tabs={tabs}
-                activeTabId={activeTabId}
-                onSelect={setActiveTabId}
-                onClose={(tabId) => void closeTab(tabId)}
-              />
+            <section className="workspace-frame">
+              {bootError && (
+                <div className="boot-error-banner">
+                  <strong>Terminal issue</strong>
+                  <span>{bootError}</span>
+                </div>
+              )}
 
-              <section className="workspace-frame">
-        {bootError && (
-          <div className="boot-error-banner">
-            <strong>Startup issue</strong>
-            <span>{bootError}</span>
-          </div>
-        )}
+              {activeTab ? (
+                <div ref={paneDeckRef} className={`pane-deck panes-${activeTab.panes.length}`} style={paneGridStyle}>
+                  {activeTab.panes.map((pane, index) => (
+                    <div
+                      key={pane.id}
+                      className="pane-slot"
+                      style={
+                        activeTab.panes.length === 2
+                          ? { gridColumn: index === 0 ? 1 : 3, gridRow: 1 }
+                          : undefined
+                      }
+                    >
+                      {activeTab.panes.length > 1 && (
+                        <div className="pane-caption">
+                          <strong>{pane.title ?? `Pane ${index + 1}`}</strong>
+                          <button type="button" className="pane-close" title="Close pane" onClick={() => void closePane(activeTab.id, pane.id)}>×</button>
+                        </div>
+                      )}
 
-        {activeTab ? (
-          <div ref={paneDeckRef} className={`pane-deck panes-${activeTab.panes.length}`} style={paneGridStyle}>
-            {activeTab.panes.map((pane, index) => (
-              <div
-                key={pane.id}
-                className="pane-slot"
-                style={
-                  activeTab.panes.length === 2
-                    ? { gridColumn: index === 0 ? 1 : 3, gridRow: 1 }
-                    : undefined
-                }
-              >
-                {activeTab.panes.length > 1 && (
-                  <div className="pane-caption">
-                    <strong>{pane.title ?? `Pane ${index + 1}`}</strong>
-                    <button type="button" className="pane-close" title="Close pane" onClick={() => void closePane(activeTab.id, pane.id)}>×</button>
-                  </div>
-                )}
+                      <TerminalPane
+                        sessionId={pane.sessionId}
+                        settings={settings}
+                        profileCategory={activeProfileCategory}
+                        active={activeTab.activePaneId === pane.id}
+                        onActivate={() => focusPane(activeTab.id, pane.id)}
+                        onTitleChange={(title) => updatePaneTitle(pane.sessionId, title)}
+                        onCwdChange={(cwd) => updatePaneCwd(pane.sessionId, cwd)}
+                        onFontDelta={fontDeltaHandler}
+                        queuedCommand={queuedCommand}
+                      />
+                    </div>
+                  ))}
 
-                <TerminalPane
-                  sessionId={pane.sessionId}
-                  settings={settings}
-                  active={activeTab.activePaneId === pane.id}
-                  onActivate={() => focusPane(activeTab.id, pane.id)}
-                  onTitleChange={(title) => updatePaneTitle(pane.sessionId, title)}
-                  onCwdChange={(cwd) => updatePaneCwd(pane.sessionId, cwd)}
-                  onFontDelta={fontDeltaHandler}
-                  queuedCommand={queuedCommand}
-                />
-              </div>
-            ))}
-
-            {activeTab.panes.length === 2 && (
-              <div
-                className="splitter"
-                style={{ gridColumn: 2, gridRow: 1 }}
-                onMouseDown={() => {
-                  dragStateRef.current = { tabId: activeTab.id };
-                }}
-              />
-            )}
-          </div>
-        ) : (
-          <div className="empty-state">
-            <strong>No terminal session is active.</strong>
-            <span>Use one of the shell buttons above, or open Claude Code when you need it.</span>
-          </div>
-        )}
-              </section>
+                  {activeTab.panes.length === 2 && (
+                    <div
+                      className="splitter"
+                      style={{ gridColumn: 2, gridRow: 1 }}
+                      onMouseDown={() => {
+                        dragStateRef.current = { tabId: activeTab.id };
+                      }}
+                    />
+                  )}
+                </div>
+              ) : (
+                <div className="empty-state">
+                  <strong>No AI terminal session is active.</strong>
+                  <span>Open a workspace and start Claude Code, or create a shell tab.</span>
+                </div>
+              )}
             </section>
+          </section>
+
+          {(filePreview || filePreviewError) && (
+            <aside className="context-preview-panel">
+              <button type="button" className="context-preview-close" onClick={() => { setFilePreview(null); setFilePreviewError(null); }}>×</button>
+              <FilePreview
+                workspaceRoot={settings.workspaceRoot}
+                preview={filePreview}
+                error={filePreviewError}
+                onChooseFolder={() => void chooseWorkspaceFolder()}
+                onOpenTerminal={() => void openWorkspaceTerminal()}
+              />
+            </aside>
           )}
         </div>
       </div>

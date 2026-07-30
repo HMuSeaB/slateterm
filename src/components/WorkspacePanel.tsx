@@ -42,8 +42,8 @@ export default function WorkspacePanel({
     <aside className="workspace-panel">
       <div className="workspace-panel-header">
         <div>
-          <strong>Workspace</strong>
-          <p>Tabs and saved layouts</p>
+          <strong>Project context</strong>
+          <p>Files available to AI sessions</p>
         </div>
         <button type="button" className="sidebar-collapse" title="Collapse sidebar" onClick={onClose}>‹</button>
       </div>
@@ -57,7 +57,7 @@ export default function WorkspacePanel({
       </div>
 
       <div className="sidebar-actions">
-        <button type="button" onClick={onOpenTerminal}><span>New terminal</span><kbd>Ctrl T</kbd></button>
+        <button type="button" onClick={onOpenTerminal}><span>Open terminal here</span><kbd>Ctrl T</kbd></button>
         <button type="button" onClick={onOpenPalette}><span>Commands</span><kbd>Ctrl Shift P</kbd></button>
         <button type="button" onClick={onOpenHistory}><span>History</span><kbd>Ctrl Shift R</kbd></button>
       </div>

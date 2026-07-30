@@ -42,8 +42,11 @@ Highlights:
 - Resize panes with the splitter
 - Search terminal output
 - Open terminal URLs with Ctrl+click in the default browser
-- Let foreground TUIs handle regular `Ctrl+V`, including Claude Code image attachments
-- Use `Ctrl+Shift+V` or `Shift+Insert` to explicitly paste clipboard text or an image file path
+- Use smart `Ctrl+V` while Claude Code is running: SlateTerm detects Claude even when it was started manually from a shell, pastes text normally, and routes images through Claude's Windows `Alt+V` action
+- Pick an image from Windows clipboard history to attach it directly while Claude Code is running
+- Drag one PNG or BMP image into a pane running Claude Code to create an image attachment; other dropped files remain terminal paths
+- Use `Ctrl+Shift+V` or `Shift+Insert` to explicitly paste clipboard text or an image file path in ordinary shells
+- Open workspace-aware shell or Claude Code tabs with the selected folder as their verified working directory
 - Save and restore named workspaces
 - Search, copy, and replay command history from the command palette
 - Inspect, collapse, copy, and rerun PowerShell command blocks
@@ -54,7 +57,7 @@ Highlights:
 
 - No account system
 - No cloud sync
-- No AI-first workflow replacing the shell
+- No cloud-hosted AI runtime; SlateTerm integrates local AI terminal tools instead
 - No plugin system
 - No cross-platform scope yet
 

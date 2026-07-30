@@ -17,7 +17,7 @@ use windows_sys::Win32::{
         Com::CoTaskMemFree,
         DataExchange::{
             CloseClipboard, EmptyClipboard, GetClipboardData, IsClipboardFormatAvailable,
-            OpenClipboard, SetClipboardData,
+            OpenClipboard, RegisterClipboardFormatW, SetClipboardData,
         },
         Memory::{GlobalAlloc, GlobalLock, GlobalSize, GlobalUnlock, GMEM_MOVEABLE},
         Ole::{CF_DIB, CF_DIBV5, CF_UNICODETEXT},
@@ -237,6 +237,146 @@ fn with_open_clipboard<T>(operation: impl FnOnce() -> Result<T, String>) -> Resu
     Err("The Windows clipboard is currently busy".into())
 }
 
+fn png_file_to_dib(path: &std::path::Path) -> Result<Vec<u8>, String> {
+    const MAX_IMAGE_DIMENSION: u32 = 16_384;
+    const MAX_IMAGE_PIXELS: u64 = 100_000_000;
+
+    let file = std::fs::File::open(path).map_err(|error| error.to_string())?;
+    let mut decoder = png::Decoder::new(file);
+    decoder.set_transformations(png::Transformations::normalize_to_color8());
+    let mut reader = decoder
+        .read_info()
+        .map_err(|error| format!("Could not decode PNG image: {error}"))?;
+    let info = reader.info();
+    if info.width == 0
+        || info.height == 0
+        || info.width > MAX_IMAGE_DIMENSION
+        || info.height > MAX_IMAGE_DIMENSION
+        || u64::from(info.width) * u64::from(info.height) > MAX_IMAGE_PIXELS
+    {
+        return Err("The dropped image dimensions are not supported".into());
+    }
+
+    let mut decoded = vec![0; reader.output_buffer_size()];
+    let output = reader
+        .next_frame(&mut decoded)
+        .map_err(|error| format!("Could not read PNG image pixels: {error}"))?;
+    let pixels = &decoded[..output.buffer_size()];
+    let width = output.width as usize;
+    let height = output.height as usize;
+    let row_bytes = width
+        .checked_mul(4)
+        .ok_or_else(|| "The dropped image is too large".to_string())?;
+    let pixel_bytes = row_bytes
+        .checked_mul(height)
+        .ok_or_else(|| "The dropped image is too large".to_string())?;
+    let mut dib = Vec::with_capacity(40 + pixel_bytes);
+
+    dib.extend_from_slice(&40u32.to_le_bytes());
+    dib.extend_from_slice(&(output.width as i32).to_le_bytes());
+    dib.extend_from_slice(&(output.height as i32).to_le_bytes());
+    dib.extend_from_slice(&1u16.to_le_bytes());
+    dib.extend_from_slice(&32u16.to_le_bytes());
+    dib.extend_from_slice(&0u32.to_le_bytes());
+    dib.extend_from_slice(&(pixel_bytes as u32).to_le_bytes());
+    dib.extend_from_slice(&0i32.to_le_bytes());
+    dib.extend_from_slice(&0i32.to_le_bytes());
+    dib.extend_from_slice(&0u32.to_le_bytes());
+    dib.extend_from_slice(&0u32.to_le_bytes());
+
+    let channels = output.color_type.samples();
+    for source_y in (0..height).rev() {
+        let row_start = source_y * width * channels;
+        for x in 0..width {
+            let offset = row_start + x * channels;
+            let (red, green, blue, alpha) = match output.color_type {
+                png::ColorType::Grayscale => {
+                    let value = pixels[offset];
+                    (value, value, value, 255)
+                }
+                png::ColorType::Rgb => {
+                    (pixels[offset], pixels[offset + 1], pixels[offset + 2], 255)
+                }
+                png::ColorType::GrayscaleAlpha => {
+                    let value = pixels[offset];
+                    (value, value, value, pixels[offset + 1])
+                }
+                png::ColorType::Rgba => (
+                    pixels[offset],
+                    pixels[offset + 1],
+                    pixels[offset + 2],
+                    pixels[offset + 3],
+                ),
+                png::ColorType::Indexed => {
+                    return Err("Could not expand the PNG color palette".into());
+                }
+            };
+            let composite = |channel: u8| -> u8 {
+                let alpha = u32::from(alpha);
+                (((u32::from(channel) * alpha) + (255 * (255 - alpha))) / 255) as u8
+            };
+            dib.extend_from_slice(&[composite(blue), composite(green), composite(red), 0]);
+        }
+    }
+
+    Ok(dib)
+}
+
+fn image_file_to_dib(path: &std::path::Path) -> Result<Vec<u8>, String> {
+    if !path.is_file() {
+        return Err("The dropped image path is not a file".into());
+    }
+    let extension = path
+        .extension()
+        .and_then(|value| value.to_str())
+        .map(str::to_ascii_lowercase)
+        .unwrap_or_default();
+    match extension.as_str() {
+        "png" => png_file_to_dib(path),
+        "bmp" => {
+            let bitmap = std::fs::read(path).map_err(|error| error.to_string())?;
+            if bitmap.len() < 54 || &bitmap[..2] != b"BM" {
+                return Err("The dropped BMP image is invalid".into());
+            }
+            Ok(bitmap[14..].to_vec())
+        }
+        _ => Err("Only PNG and BMP images can currently be attached by dragging".into()),
+    }
+}
+
+fn set_clipboard_dib(dib: Vec<u8>) -> Result<(), String> {
+    if dib.is_empty() {
+        return Err("The dropped image contains no bitmap data".into());
+    }
+    with_open_clipboard(|| unsafe {
+        if EmptyClipboard() == 0 {
+            return Err("Could not clear clipboard".into());
+        }
+        let allocation = GlobalAlloc(GMEM_MOVEABLE, dib.len());
+        if allocation.is_null() {
+            return Err("Could not allocate clipboard image memory".into());
+        }
+        let pointer = GlobalLock(allocation);
+        if pointer.is_null() {
+            GlobalFree(allocation);
+            return Err("Could not lock clipboard image memory".into());
+        }
+        ptr::copy_nonoverlapping(dib.as_ptr(), pointer as *mut u8, dib.len());
+        GlobalUnlock(allocation);
+        if SetClipboardData(CF_DIB as u32, allocation as *mut _).is_null() {
+            GlobalFree(allocation);
+            return Err("Could not write the dropped image to the clipboard".into());
+        }
+        Ok(())
+    })
+}
+
+#[tauri::command]
+fn write_clipboard_image_file(path: String) -> Result<(), String> {
+    let dib = image_file_to_dib(std::path::Path::new(&path))?;
+    set_clipboard_dib(dib)
+}
+
 #[tauri::command]
 fn read_clipboard_text() -> Result<String, String> {
     with_open_clipboard(|| unsafe {
@@ -256,6 +396,21 @@ fn read_clipboard_text() -> Result<String, String> {
         let text = String::from_utf16_lossy(std::slice::from_raw_parts(wide, length));
         GlobalUnlock(handle as *mut _);
         Ok(text)
+    })
+}
+
+fn png_clipboard_format() -> u32 {
+    let format_name = wide_null("PNG");
+    unsafe { RegisterClipboardFormatW(format_name.as_ptr()) }
+}
+
+#[tauri::command]
+fn clipboard_has_image() -> Result<bool, String> {
+    with_open_clipboard(|| unsafe {
+        let png_format = png_clipboard_format();
+        Ok(IsClipboardFormatAvailable(CF_DIBV5 as u32) != 0
+            || IsClipboardFormatAvailable(CF_DIB as u32) != 0
+            || (png_format != 0 && IsClipboardFormatAvailable(png_format) != 0))
     })
 }
 
@@ -374,7 +529,9 @@ fn main() {
             save_temp_image,
             open_external_url,
             read_clipboard_text,
+            clipboard_has_image,
             read_clipboard_image,
+            write_clipboard_image_file,
             write_clipboard_text
         ]);
 

@@ -63,8 +63,16 @@ export async function readClipboardText() {
   return invoke<string>("read_clipboard_text");
 }
 
+export async function clipboardHasImage() {
+  return invoke<boolean>("clipboard_has_image");
+}
+
 export async function readClipboardImage() {
   return invoke<string | null>("read_clipboard_image");
+}
+
+export async function writeClipboardImageFile(path: string) {
+  return invoke<void>("write_clipboard_image_file", { path });
 }
 
 export async function writeClipboardText(text: string) {
