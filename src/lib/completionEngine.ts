@@ -8,8 +8,6 @@ const BUILTIN_COMMANDS: string[] = [
   "pnpm install",
   "pnpm test",
   "pnpm build",
-  "npm run dev",
-  "npm run build",
   "git status",
   "git diff",
   "git log --oneline",

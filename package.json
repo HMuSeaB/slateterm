@@ -2,6 +2,11 @@
   "name": "slateterm",
   "private": true,
   "version": "0.1.1",
+  "packageManager": "pnpm@10.24.0",
+  "engines": {
+    "node": ">=20",
+    "pnpm": ">=10"
+  },
   "type": "module",
   "scripts": {
     "dev": "vite",

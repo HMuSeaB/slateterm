@@ -23,7 +23,7 @@
   <text x="130" y="448" fill="#F6AE2D" font-size="16" font-family="Cascadia Mono, Consolas, monospace">PS C:\Users\dev&gt; git status</text>
   <text x="130" y="485" fill="#B7C0CA" font-size="16" font-family="Cascadia Mono, Consolas, monospace">On branch main</text>
   <text x="130" y="517" fill="#B7C0CA" font-size="16" font-family="Cascadia Mono, Consolas, monospace">nothing to commit, working tree clean</text>
-  <text x="130" y="565" fill="#F6AE2D" font-size="16" font-family="Cascadia Mono, Consolas, monospace">PS C:\Users\dev&gt; npm run tauri dev</text>
+  <text x="130" y="565" fill="#F6AE2D" font-size="16" font-family="Cascadia Mono, Consolas, monospace">PS C:\Users\dev&gt; pnpm tauri dev</text>
   <text x="130" y="602" fill="#B7C0CA" font-size="16" font-family="Cascadia Mono, Consolas, monospace">Running shell-first startup...</text>
   <rect x="655" y="342" width="545" height="378" rx="24" fill="#10161F" stroke="#6D5221"/>
   <text x="685" y="384" fill="#F7F4EA" font-size="20" font-family="Segoe UI, Arial, sans-serif" font-weight="700">Pane B · Claude Code</text>

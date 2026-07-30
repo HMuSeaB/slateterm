@@ -9,10 +9,10 @@ SlateTerm started as a reaction to cloud-first terminal products that feel heavy
 ## Current Focus
 
 - Windows-first desktop shell
-- Traditional terminal flow instead of command blocks
+- Traditional xterm.js terminal flow with optional PowerShell command blocks
 - PowerShell 7 and Command Prompt as primary built-in shells
 - Optional `Claude Code` entry without turning the whole app into an AI product
-- Native-feeling terminal window with tabs, split panes, search, copy/paste, and local settings
+- Native-feeling terminal window with tabs, split panes, workspaces, search, copy/paste, and local settings
 
 ## Stack
 
@@ -32,7 +32,8 @@ Highlights:
 - Shell-first startup so the app becomes usable before optional AI tooling matters
 - PowerShell 7 and Command Prompt as the main launch targets
 - `Claude Code` kept as an optional entry instead of the center of the whole product
-- Native-feeling tabs, split panes, search, and local settings persistence
+- Native-feeling tabs, split panes, named workspaces, command palette, and local settings persistence
+- PowerShell Shell Integration for structured command blocks, CWD tracking, and exit status
 
 ## What Works Today
 
@@ -40,9 +41,13 @@ Highlights:
 - Split the active tab into two panes
 - Resize panes with the splitter
 - Search terminal output
-- Copy and paste with terminal-friendly shortcuts
+- Open terminal URLs with Ctrl+click in the default browser
+- Use native Windows clipboard shortcuts and paste file/image paths
+- Save and restore named workspaces
+- Search, copy, and replay command history from the command palette
+- Inspect, collapse, copy, and rerun PowerShell command blocks
 - Persist theme, font, cursor, and startup shell settings locally
-- Launch `Claude Code` from the same shell environment when it is installed on the machine
+- Launch, continue, or resume `Claude Code` when it is installed on the machine
 
 ## Deliberate Non-Goals For This MVP
 
@@ -56,7 +61,8 @@ Highlights:
 
 Requirements:
 
-- Node.js
+- Node.js 20 or newer
+- pnpm 10 or newer (`corepack enable` can provide it with supported Node.js installations)
 - Rust toolchain
 - Tauri prerequisites for Windows
 - PowerShell 7 recommended
@@ -64,29 +70,36 @@ Requirements:
 Install dependencies:
 
 ```bash
-npm install
+pnpm install --frozen-lockfile
 ```
 
 Run the desktop app in development:
 
 ```bash
-npm run tauri dev
+pnpm tauri dev
+```
+
+Run only the Vite frontend:
+
+```bash
+pnpm dev
 ```
 
 Build the frontend bundle:
 
 ```bash
-npm run build
+pnpm build
 ```
 
 Build the desktop application:
 
 ```bash
-npm run tauri build
+pnpm tauri build
 ```
 
 ## Repository Notes
 
+- pnpm is the required JavaScript package manager; `pnpm-lock.yaml` is the only dependency lock file.
 - The repo ignores local build output such as `node_modules`, `dist`, and `src-tauri/target`.
 - Current app version is `0.1.1`.
 - Startup is optimized around opening a shell quickly first; extra AI tooling should stay optional and minimal.

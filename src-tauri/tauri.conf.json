@@ -4,8 +4,8 @@
   "version": "0.1.1",
   "identifier": "com.archive.slateterm",
   "build": {
-    "beforeDevCommand": "npm run dev",
-    "beforeBuildCommand": "npm run build",
+    "beforeDevCommand": "pnpm dev",
+    "beforeBuildCommand": "pnpm build",
     "devUrl": "http://127.0.0.1:1420",
     "frontendDist": "../dist"
   },
