@@ -59,12 +59,18 @@ export type Settings = {
   namedWorkspaces?: NamedWorkspace[];
 };
 
+export type PaneRuntimeMode = "shell" | "claude";
+export type PaneSessionState = "running" | "exited" | "error";
+
 export type Pane = {
   id: string;
   sessionId: string;
+  profileId: string;
   sizeRatio: number;
   title?: string;
   cwd?: string;
+  runtimeMode: PaneRuntimeMode;
+  sessionState: PaneSessionState;
 };
 
 export type Tab = {
@@ -126,6 +132,7 @@ export type CommandBlock = {
   id: string;
   command: string;
   output: string;
+  outputTruncated?: boolean;
   cwd?: string;
   exitCode?: number | null;
   status: "running" | "finished";

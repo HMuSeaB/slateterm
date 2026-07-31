@@ -32,10 +32,10 @@ export default function HistoryPanel({ open, onClose, onRun }: Props) {
 
   return (
     <div className="command-overlay" onMouseDown={onClose}>
-      <section className="history-panel" onMouseDown={(event) => event.stopPropagation()}>
+      <section className="history-panel" role="dialog" aria-modal="true" aria-label="Command history" onMouseDown={(event) => event.stopPropagation()}>
         <div className="history-header">
           <div><strong>Command history</strong><span>{commands.length} commands</span></div>
-          <div><button type="button" onClick={() => clearHistory()}>Clear</button><button type="button" onClick={onClose}>Close</button></div>
+          <div><button type="button" onClick={() => { if (window.confirm("Clear all saved command history?")) clearHistory(); }}>Clear</button><button type="button" className="overlay-close-button" aria-label="Close command history" onClick={onClose}>×</button></div>
         </div>
         <input ref={inputRef} value={query} placeholder="Search command history" onChange={(event) => setQuery(event.target.value)} onKeyDown={(event) => { if (event.key === "Escape") onClose(); }} />
         <div className="history-list">

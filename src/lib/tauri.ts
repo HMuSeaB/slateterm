@@ -55,6 +55,10 @@ export async function saveTempImage(bytes: Uint8Array, extension?: string) {
   return invoke<string>("save_temp_image", { bytes: Array.from(bytes), extension: extension || null });
 }
 
+export async function readImageFile(path: string) {
+  return invoke<number[]>("read_image_file", { path }).then((bytes) => new Uint8Array(bytes));
+}
+
 export async function openExternalUrl(url: string) {
   return invoke<void>("open_external_url", { url });
 }

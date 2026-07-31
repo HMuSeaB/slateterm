@@ -111,6 +111,20 @@ fn save_temp_image(bytes: Vec<u8>, extension: Option<String>) -> Result<String, 
     Ok(file_path.to_string_lossy().to_string())
 }
 
+#[tauri::command]
+fn read_image_file(path: String) -> Result<Vec<u8>, String> {
+    const MAX_IMAGE_FILE_BYTES: u64 = 64 * 1024 * 1024;
+    let path = std::path::Path::new(&path);
+    if !path.is_file() {
+        return Err("The dropped image path is not a file".into());
+    }
+    let metadata = std::fs::metadata(path).map_err(|error| error.to_string())?;
+    if metadata.len() > MAX_IMAGE_FILE_BYTES {
+        return Err("The dropped image is larger than the 64 MB attachment limit".into());
+    }
+    std::fs::read(path).map_err(|error| error.to_string())
+}
+
 fn wide_null(value: &str) -> Vec<u16> {
     value.encode_utf16().chain(std::iter::once(0)).collect()
 }
@@ -527,6 +541,7 @@ fn main() {
             resize_session,
             close_session,
             save_temp_image,
+            read_image_file,
             open_external_url,
             read_clipboard_text,
             clipboard_has_image,

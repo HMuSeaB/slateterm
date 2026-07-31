@@ -1,3 +1,4 @@
+import { useEffect } from "react";
 import type { Profile, Settings } from "../lib/types";
 
 type Props = {
@@ -19,6 +20,15 @@ export default function SettingsPanel({
   onClose,
   onChange,
 }: Props) {
+  useEffect(() => {
+    if (!open) return;
+    const handleKeyDown = (event: KeyboardEvent) => {
+      if (event.key === "Escape") onClose();
+    };
+    window.addEventListener("keydown", handleKeyDown, true);
+    return () => window.removeEventListener("keydown", handleKeyDown, true);
+  }, [open, onClose]);
+
   if (!open) {
     return null;
   }
@@ -33,16 +43,15 @@ export default function SettingsPanel({
   };
 
   return (
-    <aside className="settings-panel">
-      <div className="settings-panel-header">
-        <div>
-          <strong>Workspace Settings</strong>
-          <p>本地保存，修改后会立即作用到所有新旧终端。</p>
+    <div className="settings-overlay" onMouseDown={onClose}>
+      <aside className="settings-panel" role="dialog" aria-modal="true" aria-label="Terminal settings" onMouseDown={(event) => event.stopPropagation()}>
+        <div className="settings-panel-header">
+          <div>
+            <strong>Terminal settings</strong>
+            <p>Saved locally and applied immediately.</p>
+          </div>
+          <button type="button" className="overlay-close-button" aria-label="Close settings" onClick={onClose}>×</button>
         </div>
-        <button type="button" className="ghost-button" onClick={onClose}>
-          Close
-        </button>
-      </div>
 
       <div className="settings-grid">
         <label>
@@ -112,14 +121,15 @@ export default function SettingsPanel({
         </label>
       </div>
 
-      <label className="toggle-row">
-        <input
-          type="checkbox"
-          checked={settings.rememberLayout}
-          onChange={(e) => update("rememberLayout", e.target.checked)}
-        />
-        <span>Remember current layout preference for the next launch</span>
-      </label>
-    </aside>
+        <label className="toggle-row">
+          <input
+            type="checkbox"
+            checked={settings.rememberLayout}
+            onChange={(e) => update("rememberLayout", e.target.checked)}
+          />
+          <span>Remember current layout preference for the next launch</span>
+        </label>
+      </aside>
+    </div>
   );
 }

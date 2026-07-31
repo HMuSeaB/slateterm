@@ -11,25 +11,20 @@ type Props = {
 export default function TabBar({ tabs, activeTabId, onSelect, onClose }: Props) {
   return (
     <nav className="tabbar">
-      {tabs.map((tab) => (
-        <button
-          type="button"
-          key={tab.id}
-          className={clsx("tab-pill", tab.id === activeTabId && "is-active")}
-          onClick={() => onSelect(tab.id)}
-        >
-          <span>{tab.title}</span>
-          <span
-            className="tab-pill-close"
-            onClick={(event) => {
-              event.stopPropagation();
-              onClose(tab.id);
-            }}
-          >
-            ×
-          </span>
-        </button>
-      ))}
+      {tabs.map((tab) => {
+        const activePane = tab.panes.find((pane) => pane.id === tab.activePaneId) ?? tab.panes[0];
+        const runtimeLabel = activePane?.runtimeMode === "claude" ? "AI" : "Shell";
+        return (
+          <div key={tab.id} className={clsx("tab-pill", tab.id === activeTabId && "is-active", activePane?.runtimeMode === "claude" && "is-claude")}>
+            <button type="button" className="tab-pill-main" title={tab.title} onClick={() => onSelect(tab.id)}>
+              <span className={`tab-runtime-dot is-${activePane?.runtimeMode ?? "shell"}`} aria-hidden="true" />
+              <span>{tab.title}</span>
+              <small>{activePane?.sessionState === "running" ? runtimeLabel : activePane?.sessionState}</small>
+            </button>
+            <button type="button" className="tab-pill-close" aria-label={`Close ${tab.title}`} onClick={() => onClose(tab.id)}>×</button>
+          </div>
+        );
+      })}
     </nav>
   );
 }

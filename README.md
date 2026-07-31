@@ -4,15 +4,15 @@ Local-first Windows terminal built with Tauri, Rust, React, and xterm.js.
 
 ![SlateTerm hero](docs/hero.svg)
 
-SlateTerm started as a reaction to cloud-first terminal products that feel heavy, require sign-in, or drift too far from a traditional shell workflow. The goal is simple: keep the terminal local, fast enough to use every day, and pleasant to look at on Windows.
+SlateTerm is a local-first, workspace-aware AI terminal for Windows. It keeps the terminal as the primary surface while adding project context, visible AI runtime state, and native Windows integration around local AI coding tools.
 
 ## Current Focus
 
-- Windows-first desktop shell
-- Traditional xterm.js terminal flow with optional PowerShell command blocks
-- PowerShell 7 and Command Prompt as primary built-in shells
-- Optional `Claude Code` entry without turning the whole app into an AI product
-- Native-feeling terminal window with tabs, split panes, workspaces, search, copy/paste, and local settings
+- Windows-first, workspace-aware AI terminal
+- Terminal-dominant xterm.js workflow with optional PowerShell command blocks
+- Claude Code sessions with visible runtime state and workspace CWD
+- PowerShell 7 and Command Prompt as first-class local shells
+- Native-feeling tabs, split panes, project context, image attachments, search, copy/paste, and local settings
 
 ## Stack
 
@@ -29,9 +29,9 @@ SlateTerm started as a reaction to cloud-first terminal products that feel heavy
 
 Highlights:
 
-- Shell-first startup so the app becomes usable before optional AI tooling matters
-- PowerShell 7 and Command Prompt as the main launch targets
-- `Claude Code` kept as an optional entry instead of the center of the whole product
+- Fast shell-first startup with Claude Code available as a first-class AI runtime
+- PowerShell 7 and Command Prompt as primary local shell targets
+- Persistent Shell/Claude status in tabs and the active workspace context bar
 - Native-feeling tabs, split panes, named workspaces, command palette, and local settings persistence
 - PowerShell Shell Integration for structured command blocks, CWD tracking, and exit status
 
@@ -44,12 +44,14 @@ Highlights:
 - Open terminal URLs with Ctrl+click in the default browser
 - Use smart `Ctrl+V` while Claude Code is running: SlateTerm detects Claude even when it was started manually from a shell, pastes text normally, and routes images through Claude's Windows `Alt+V` action
 - Pick an image from Windows clipboard history to attach it directly while Claude Code is running
-- Drag one PNG or BMP image into a pane running Claude Code to create an image attachment; other dropped files remain terminal paths
+- Drag one PNG, JPG, JPEG, WebP, GIF, or BMP image into a pane running Claude Code to create an image attachment; non-PNG/BMP files are safely converted before attachment and other dropped files remain terminal paths
 - Use `Ctrl+Shift+V` or `Shift+Insert` to explicitly paste clipboard text or an image file path in ordinary shells
 - Open workspace-aware shell or Claude Code tabs with the selected folder as their verified working directory
 - Save and restore named workspaces
 - Search, copy, and replay command history from the command palette
-- Inspect, collapse, copy, and rerun PowerShell command blocks
+- Inspect, collapse, copy, and rerun PowerShell command blocks in a non-blocking right-side drawer
+- Read each pane's runtime, session status, title, and working directory from a compact persistent pane header
+- Use consistent keyboard-dismissable command, history, settings, and file-preview overlays
 - Persist theme, font, cursor, and startup shell settings locally
 - Launch, continue, or resume `Claude Code` when it is installed on the machine
 
@@ -106,7 +108,7 @@ pnpm tauri build
 - pnpm is the required JavaScript package manager; `pnpm-lock.yaml` is the only dependency lock file.
 - The repo ignores local build output such as `node_modules`, `dist`, and `src-tauri/target`.
 - Current app version is `0.1.1`.
-- Startup is optimized around opening a shell quickly first; extra AI tooling should stay optional and minimal.
+- Startup remains optimized around opening a local shell quickly, while AI runtimes are treated as visible, workspace-aware terminal sessions.
 
 ## Near-Term Direction
 

@@ -131,7 +131,7 @@ export default function App() {
   const dragStateRef = useRef<{ tabId: string } | null>(null);
 
   const activeTab = tabs.find((tab) => tab.id === activeTabId) ?? null;
-  const activeProfileCategory = profiles.find((profile) => profile.id === activeTab?.profileId)?.category ?? "shell";
+  const activePane = activeTab?.panes.find((pane) => pane.id === activeTab.activePaneId) ?? activeTab?.panes[0] ?? null;
   const claudeProfile = profiles.find((profile) => profile.id === "claude") ?? null;
 
   useEffect(() => {
@@ -215,7 +215,7 @@ export default function App() {
               profileId: t.profileId,
               title: t.title,
               panes: t.panes.map((p) => ({
-                profileId: t.profileId,
+                profileId: p.profileId,
                 cwd: p.cwd || null,
                 sizeRatio: p.sizeRatio,
                 title: p.title,
@@ -264,9 +264,12 @@ export default function App() {
           restoredPanes.push({
             id: makeId("pane"),
             sessionId: session.sessionId,
+            profileId: paneProfileId,
             sizeRatio: savedPane.sizeRatio ?? 1,
             title: savedPane.title || profileLabel(paneProfileId, sourceProfiles),
-            cwd: paneCwd || undefined,
+            cwd: session.cwd || paneCwd || undefined,
+            runtimeMode: sourceProfiles.find((profile) => profile.id === paneProfileId)?.category === "ai" ? "claude" : "shell",
+            sessionState: "running",
           });
         }
 
@@ -306,7 +309,7 @@ export default function App() {
         profileId: tab.profileId,
         title: tab.title,
         panes: tab.panes.map((pane) => ({
-          profileId: tab.profileId,
+          profileId: pane.profileId,
           cwd: pane.cwd || null,
           sizeRatio: pane.sizeRatio,
           title: pane.title,
@@ -446,12 +449,16 @@ export default function App() {
     const resolvedProfileId = resolveProfileId(profileId, sourceProfiles);
     const profileName = profileLabel(resolvedProfileId, sourceProfiles);
     const primarySession = await createSession(resolvedProfileId, 120, 32, initialCwd);
+    const initialRuntimeMode = sourceProfiles.find((profile) => profile.id === resolvedProfileId)?.category === "ai" ? "claude" : "shell";
     const primaryPane: Pane = {
       id: makeId("pane"),
       sessionId: primarySession.sessionId,
+      profileId: resolvedProfileId,
       sizeRatio: 1,
       title: profileName,
       cwd: primarySession.cwd || initialCwd || undefined,
+      runtimeMode: initialRuntimeMode,
+      sessionState: "running",
     };
 
     if (layout.paneCount !== 2) {
@@ -472,9 +479,12 @@ export default function App() {
     const secondaryPane: Pane = {
       id: makeId("pane"),
       sessionId: secondarySession.sessionId,
+      profileId: resolvedProfileId,
       sizeRatio: 1 - splitRatio,
       title: profileName,
       cwd: secondarySession.cwd || initialCwd || undefined,
+      runtimeMode: initialRuntimeMode,
+      sessionState: "running",
     };
 
     return {
@@ -578,9 +588,12 @@ export default function App() {
       const nextPane: Pane = {
         id: makeId("pane"),
         sessionId: result.sessionId,
+        profileId: activeTab.profileId,
         sizeRatio: 0.5,
         title: profileName,
         cwd: result.cwd || targetCwd || undefined,
+        runtimeMode: profiles.find((profile) => profile.id === activeTab.profileId)?.category === "ai" ? "claude" : "shell",
+        sessionState: "running",
       };
 
       setTabs((current) =>
@@ -720,6 +733,28 @@ export default function App() {
     );
   }
 
+  function updatePaneRuntime(sessionId: string, runtimeMode: Pane["runtimeMode"]) {
+    setTabs((current) =>
+      current.map((tab) => ({
+        ...tab,
+        panes: tab.panes.map((pane) =>
+          pane.sessionId === sessionId && pane.runtimeMode !== runtimeMode ? { ...pane, runtimeMode } : pane,
+        ),
+      })),
+    );
+  }
+
+  function updatePaneSessionState(sessionId: string, sessionState: Pane["sessionState"]) {
+    setTabs((current) =>
+      current.map((tab) => ({
+        ...tab,
+        panes: tab.panes.map((pane) =>
+          pane.sessionId === sessionId && pane.sessionState !== sessionState ? { ...pane, sessionState } : pane,
+        ),
+      })),
+    );
+  }
+
   function focusPane(tabId: string, paneId: string) {
     setTabs((current) =>
       current.map((tab) =>
@@ -810,25 +845,23 @@ export default function App() {
           onChooseFolder={() => void chooseWorkspaceFolder()}
           onSelectFile={(path) => void previewWorkspaceFile(path)}
           onSelectDirectory={selectWorkspaceDirectory}
-          onOpenTerminal={() => void openWorkspaceTerminal()}
           onSaveCurrent={saveNamedWorkspace}
           onLoad={(workspaceId) => void loadNamedWorkspace(workspaceId)}
           onDelete={deleteNamedWorkspace}
-          onOpenPalette={() => setPaletteOpen(true)}
-          onOpenHistory={() => setHistoryOpen(true)}
         />
 
         <div className={`app-main-content ${filePreview || filePreviewError ? "has-context-preview" : ""}`}>
           <div className="terminal-context-bar">
             <div>
-              <span className="context-status-dot" />
+              <span className={`context-status-dot is-${activePane?.sessionState || "idle"}`} />
               <strong>{settings.workspaceRoot?.split(/[\\/]/).filter(Boolean).slice(-1)[0] || "No workspace"}</strong>
-              <span>{settings.workspaceRoot || "Choose a folder to give AI sessions project context"}</span>
+              {activePane && <span className={`runtime-context-badge is-${activePane.runtimeMode}`}>{activePane.runtimeMode === "claude" ? "Claude active" : "Shell"}</span>}
+              <span>{activePane?.cwd || settings.workspaceRoot || "Choose a folder to give AI sessions project context"}</span>
             </div>
             <div>
-              <button type="button" className="ghost-button" onClick={() => void chooseWorkspaceFolder()}>Open folder</button>
-              <button type="button" className="ghost-button" disabled={!settings.workspaceRoot || !claudeProfile} onClick={() => void openWorkspaceTerminal("claude")}>Claude here</button>
-              <button type="button" className="ghost-button" disabled={!settings.workspaceRoot} onClick={() => void openWorkspaceTerminal(selectedProfileId)}>Shell here</button>
+              <button type="button" className="context-folder-button" title={settings.workspaceRoot ? "Change project folder" : "Open project folder"} onClick={() => void chooseWorkspaceFolder()}>{settings.workspaceRoot ? "Change" : "Open folder"}</button>
+              <button type="button" className="context-primary-action" disabled={!settings.workspaceRoot || !claudeProfile} onClick={() => void openWorkspaceTerminal("claude")}>Start Claude</button>
+              <button type="button" className="context-more-action" title="Open shell in project" aria-label="Open shell in project" disabled={!settings.workspaceRoot} onClick={() => void openWorkspaceTerminal(selectedProfileId)}>Shell</button>
             </div>
           </div>
 
@@ -860,21 +893,21 @@ export default function App() {
                           : undefined
                       }
                     >
-                      {activeTab.panes.length > 1 && (
-                        <div className="pane-caption">
-                          <strong>{pane.title ?? `Pane ${index + 1}`}</strong>
-                          <button type="button" className="pane-close" title="Close pane" onClick={() => void closePane(activeTab.id, pane.id)}>×</button>
-                        </div>
-                      )}
-
                       <TerminalPane
                         sessionId={pane.sessionId}
                         settings={settings}
-                        profileCategory={activeProfileCategory}
+                        profileCategory={profiles.find((profile) => profile.id === pane.profileId)?.category ?? "shell"}
+                        paneTitle={pane.title ?? `Pane ${index + 1}`}
+                        cwd={pane.cwd}
+                        sessionState={pane.sessionState}
                         active={activeTab.activePaneId === pane.id}
+                        canClose={activeTab.panes.length > 1}
                         onActivate={() => focusPane(activeTab.id, pane.id)}
+                        onClose={() => void closePane(activeTab.id, pane.id)}
                         onTitleChange={(title) => updatePaneTitle(pane.sessionId, title)}
                         onCwdChange={(cwd) => updatePaneCwd(pane.sessionId, cwd)}
+                        onRuntimeModeChange={(mode) => updatePaneRuntime(pane.sessionId, mode)}
+                        onSessionStateChange={(state) => updatePaneSessionState(pane.sessionId, state)}
                         onFontDelta={fontDeltaHandler}
                         queuedCommand={queuedCommand}
                       />

@@ -6,7 +6,40 @@
     <title>SlateTerm</title>
   </head>
   <body>
-    <div id="root"></div>
+    <div id="root">
+      <main id="boot-diagnostic" style="display:grid;width:100%;height:100%;place-items:center;background:#10141a;color:#d9e1e4;font:14px/1.5 'Segoe UI',sans-serif">
+        <section style="max-width:720px;padding:24px">
+          <strong>Starting SlateTerm...</strong>
+          <p style="color:#81909a">Loading the desktop interface.</p>
+        </section>
+      </main>
+    </div>
+    <script>
+      (() => {
+        const showBootError = (message) => {
+          const diagnostic = document.getElementById("boot-diagnostic");
+          if (!diagnostic) return;
+          diagnostic.querySelector("strong").textContent = "SlateTerm could not load the interface";
+          diagnostic.querySelector("p").textContent = String(message || "Unknown frontend startup error");
+        };
+        window.addEventListener("error", (event) => {
+          const target = event.target;
+          if (target instanceof HTMLScriptElement) {
+            showBootError(`Could not load frontend script: ${target.src}`);
+            return;
+          }
+          showBootError(event.error?.stack || event.message);
+        }, true);
+        window.addEventListener("unhandledrejection", (event) => {
+          showBootError(event.reason?.stack || event.reason);
+        });
+        window.setTimeout(() => {
+          if (document.getElementById("boot-diagnostic")) {
+            showBootError("The frontend script did not start within 5 seconds. The bundled JavaScript resource may be unavailable.");
+          }
+        }, 5000);
+      })();
+    </script>
     <script type="module" src="/src/main.tsx"></script>
   </body>
   </html>

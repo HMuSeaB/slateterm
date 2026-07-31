@@ -12,6 +12,7 @@ import {
   openExternalUrl,
   readClipboardImage,
   readClipboardText,
+  readImageFile,
   resizeSession,
   saveTempImage,
   writeClipboardImageFile,
@@ -25,6 +26,8 @@ import type {
   ErrorEvent,
   ExitEvent,
   OutputEvent,
+  PaneRuntimeMode,
+  PaneSessionState,
   Settings,
   TitleEvent,
 } from "../lib/types";
@@ -33,10 +36,17 @@ type Props = {
   sessionId: string;
   settings: Settings;
   profileCategory: "shell" | "ai";
+  paneTitle?: string;
+  cwd?: string;
+  sessionState: PaneSessionState;
   active: boolean;
+  canClose?: boolean;
   onActivate: () => void;
+  onClose?: () => void;
   onTitleChange: (title: string) => void;
   onCwdChange?: (cwd: string) => void;
+  onRuntimeModeChange?: (mode: PaneRuntimeMode) => void;
+  onSessionStateChange?: (state: PaneSessionState) => void;
   onFontDelta: (delta: number) => void;
   queuedCommand?: { id: string; value: string; sessionId: string } | null;
 };
@@ -55,8 +65,9 @@ type StatusBanner = {
 };
 
 const CLAUDE_IMAGE_ATTACH_SEQUENCE = "\x1bv";
-const ATTACHABLE_IMAGE_EXTENSIONS = new Set(["png", "bmp"]);
-const IMAGE_PATH_EXTENSIONS = new Set(["png", "bmp", "jpg", "jpeg", "gif", "webp"]);
+const ATTACHABLE_IMAGE_EXTENSIONS = new Set(["png", "bmp", "jpg", "jpeg", "gif", "webp"]);
+const IMAGE_PATH_EXTENSIONS = ATTACHABLE_IMAGE_EXTENSIONS;
+const MAX_COMMAND_BLOCK_OUTPUT = 1_000_000;
 
 function imageExtension(path: string) {
   const normalized = path.split(/[?#]/, 1)[0];
@@ -82,6 +93,38 @@ function isClaudeCommand(command: string) {
   return /(?:^|[;&|]\s*)(?:&\s*)?(?:claude(?:\.cmd|\.exe)?|["'][^"']*[\\/]claude(?:\.cmd|\.exe)?["'])(?:\s|$)/.test(
     normalized,
   );
+}
+
+async function imageBlobToPngBytes(blob: Blob) {
+  const bitmap = await createImageBitmap(blob);
+  try {
+    const canvas = document.createElement("canvas");
+    canvas.width = bitmap.width;
+    canvas.height = bitmap.height;
+    const context = canvas.getContext("2d");
+    if (!context) {
+      throw new Error("Canvas image conversion is unavailable");
+    }
+    context.drawImage(bitmap, 0, 0);
+    const pngBlob = await new Promise<Blob>((resolve, reject) => {
+      canvas.toBlob((converted) => {
+        if (converted) resolve(converted);
+        else reject(new Error("Could not convert the image to PNG"));
+      }, "image/png");
+    });
+    return new Uint8Array(await pngBlob.arrayBuffer());
+  } finally {
+    bitmap.close();
+  }
+}
+
+function imageMimeType(path: string) {
+  const extension = imageExtension(path);
+  if (extension === "jpg" || extension === "jpeg") return "image/jpeg";
+  if (extension === "gif") return "image/gif";
+  if (extension === "webp") return "image/webp";
+  if (extension === "bmp") return "image/bmp";
+  return "image/png";
 }
 
 function themeForMode(theme: Settings["theme"]) {
@@ -140,10 +183,17 @@ export default function TerminalPane({
   sessionId,
   settings,
   profileCategory,
+  paneTitle,
+  cwd,
+  sessionState,
   active,
+  canClose = false,
   onActivate,
+  onClose,
   onTitleChange,
   onCwdChange,
+  onRuntimeModeChange,
+  onSessionStateChange,
   onFontDelta,
   queuedCommand,
 }: Props) {
@@ -154,12 +204,14 @@ export default function TerminalPane({
   const onFontDeltaRef = useRef(onFontDelta);
   const onTitleChangeRef = useRef(onTitleChange);
   const onCwdChangeRef = useRef(onCwdChange);
+  const onRuntimeModeChangeRef = useRef(onRuntimeModeChange);
+  const onSessionStateChangeRef = useRef(onSessionStateChange);
 
   const [searchOpen, setSearchOpen] = useState(false);
   const [query, setQuery] = useState("");
   const [searchStatus, setSearchStatus] = useState<string | null>(null);
   const [sessionStatus, setSessionStatus] = useState<StatusBanner | null>(null);
-  const [blocksOpen, setBlocksOpen] = useState(true);
+  const [blocksOpen, setBlocksOpen] = useState(false);
   const [commandBlocks, setCommandBlocks] = useState<CommandBlock[]>([]);
   const [collapsedBlocks, setCollapsedBlocks] = useState<Record<string, boolean>>({});
 
@@ -190,20 +242,28 @@ export default function TerminalPane({
   }, [onCwdChange]);
 
   useEffect(() => {
+    onRuntimeModeChangeRef.current = onRuntimeModeChange;
+  }, [onRuntimeModeChange]);
+
+  useEffect(() => {
+    onSessionStateChangeRef.current = onSessionStateChange;
+  }, [onSessionStateChange]);
+
+  useEffect(() => {
     activeRef.current = active;
   }, [active]);
 
   useEffect(() => {
     profileCategoryRef.current = profileCategory;
     if (profileCategory === "ai") {
-      runtimeModeRef.current = "claude";
-      setRuntimeMode("claude");
+      setPaneRuntimeMode("claude");
     }
   }, [profileCategory]);
 
-  function setPaneRuntimeMode(mode: "shell" | "claude") {
+  function setPaneRuntimeMode(mode: PaneRuntimeMode) {
     runtimeModeRef.current = mode;
     setRuntimeMode(mode);
+    onRuntimeModeChangeRef.current?.(mode);
   }
 
   function isClaudeRuntime() {
@@ -249,7 +309,14 @@ export default function TerminalPane({
 
   async function attachImageFileToClaude(path: string) {
     setSessionStatus({ tone: "info", message: "Preparing dropped image for Claude Code..." });
-    await writeClipboardImageFile(path);
+    const extension = imageExtension(path);
+    let attachmentPath = path;
+    if (extension !== "png" && extension !== "bmp") {
+      const sourceBytes = await readImageFile(path);
+      const pngBytes = await imageBlobToPngBytes(new Blob([sourceBytes], { type: imageMimeType(path) }));
+      attachmentPath = await saveTempImage(pngBytes, "png");
+    }
+    await writeClipboardImageFile(attachmentPath);
     await attachClipboardImageToClaude("Attaching dropped image to Claude Code...");
   }
 
@@ -269,8 +336,8 @@ export default function TerminalPane({
     if (imagePaths.length > 0) {
       throw new Error(
         isAttachableImagePath(imagePaths[0])
-          ? "Drop one PNG or BMP image at a time to attach it to Claude Code."
-          : "Convert this image to PNG or BMP before attaching it.",
+          ? "Drop one image at a time to attach it to Claude Code."
+          : "This image format is not supported for attachment.",
       );
     }
 
@@ -299,8 +366,8 @@ export default function TerminalPane({
         if (!isClaudeRuntime()) {
           throw new Error("Start Claude Code before attaching a clipboard image.");
         }
-        const extension = imageFile.type === "image/bmp" ? "bmp" : "png";
-        const imagePath = await saveTempImage(new Uint8Array(await imageFile.arrayBuffer()), extension);
+        const pngBytes = await imageBlobToPngBytes(imageFile);
+        const imagePath = await saveTempImage(pngBytes, "png");
         await attachImageFileToClaude(imagePath);
         return;
       }
@@ -672,6 +739,7 @@ export default function TerminalPane({
       if (!mounted || event.payload.sessionId !== sessionId) {
         return;
       }
+      onSessionStateChangeRef.current?.("exited");
       setSessionStatus(
         event.payload.exitCode === 0
           ? { tone: "info", message: "Session ended cleanly." }
@@ -683,6 +751,7 @@ export default function TerminalPane({
       if (!mounted || event.payload.sessionId !== sessionId) {
         return;
       }
+      onSessionStateChangeRef.current?.("error");
       setSessionStatus({ tone: "error", message: `Session error: ${event.payload.message}` });
     });
 
@@ -735,7 +804,18 @@ export default function TerminalPane({
             return block;
           }
           if (blockEvent.phase === "output") {
-            return { ...block, output: block.output + (blockEvent.output ?? "") };
+            if (block.outputTruncated) {
+              return block;
+            }
+            const nextOutput = block.output + (blockEvent.output ?? "");
+            if (nextOutput.length > MAX_COMMAND_BLOCK_OUTPUT) {
+              return {
+                ...block,
+                output: nextOutput.slice(0, MAX_COMMAND_BLOCK_OUTPUT),
+                outputTruncated: true,
+              };
+            }
+            return { ...block, output: nextOutput };
           }
           return {
             ...block,
@@ -789,14 +869,37 @@ export default function TerminalPane({
       onDragLeave={handleDragLeave}
       onDrop={handleDrop}
     >
-      <div className="terminal-surface">
+      <header className="terminal-pane-header">
+        <div className="terminal-pane-identity">
+          <span className={`terminal-runtime-indicator is-${runtimeMode}`} aria-hidden="true" />
+          <strong>{runtimeMode === "claude" ? "Claude" : "Shell"}</strong>
+          <span className={`terminal-session-state is-${sessionState}`}>{sessionState}</span>
+          <span className="terminal-pane-title" title={paneTitle}>{paneTitle || "Terminal"}</span>
+          {cwd && <span className="terminal-pane-cwd" title={cwd}>{cwd}</span>}
+        </div>
+        <div className="terminal-pane-actions">
+          <button
+            type="button"
+            className={`pane-header-button ${blocksOpen ? "is-active" : ""}`}
+            disabled={commandBlocks.length === 0}
+            aria-expanded={blocksOpen}
+            onClick={() => setBlocksOpen((current) => !current)}
+          >
+            Blocks <span>{commandBlocks.length}</span>
+          </button>
+          {canClose && onClose && <button type="button" className="pane-header-close" aria-label={`Close ${paneTitle || "terminal pane"}`} onClick={onClose}>×</button>}
+        </div>
+      </header>
+
+      <div className={`terminal-pane-body ${blocksOpen && commandBlocks.length > 0 ? "has-blocks-drawer" : ""}`}>
+        <div className="terminal-surface">
         {isDragging && (
           <div className="drag-drop-overlay">
             <div className="drop-badge">
               <strong>{runtimeMode === "claude" ? "DROP IMAGE FOR CLAUDE" : "DROP FILE INTO TERMINAL"}</strong>
               <span>
                 {runtimeMode === "claude"
-                  ? "PNG or BMP becomes an image attachment; other files paste as paths"
+                  ? "Drop one PNG, JPG, WebP, GIF, or BMP image to attach it"
                   : "Start Claude Code before dropping an image attachment"}
               </span>
             </div>
@@ -854,63 +957,63 @@ export default function TerminalPane({
 
         {suggestion && (
           <div className="autosuggest-hint">
-            <span className="hint-label">WARP AUTO-COMPLETION</span>
+            <span className="hint-label">SLATE SUGGESTION</span>
             <span className="hint-matched">{inputBuffer}</span>
             <span className="hint-suffix">{suggestion.completionSuffix}</span>
             <span className="hint-kbd">Press Tab / → to complete</span>
           </div>
         )}
 
-        {commandBlocks.length > 0 && (
-          <aside className={`command-block-drawer ${blocksOpen ? "is-open" : ""}`}>
-            <button type="button" className="command-block-toggle" onClick={() => setBlocksOpen((current) => !current)}>
-              <span>Blocks</span>
-              <strong>{commandBlocks.length}</strong>
-            </button>
-            {blocksOpen && (
-              <div className="command-block-list">
-                {commandBlocks.map((block) => {
-                  const collapsed = collapsedBlocks[block.id] ?? block.status === "finished";
-                  const cleanOutput = block.output.replace(/\x1b(?:\[[0-?]*[ -/]*[@-~]|\][^\x07]*(?:\x07|\x1b\\))/g, "").trim();
-                  return (
-                    <article key={block.id} className={`command-block is-${block.status}`}>
-                      <header>
-                        <button
-                          type="button"
-                          className="command-block-collapse"
-                          onClick={() => setCollapsedBlocks((current) => ({ ...current, [block.id]: !collapsed }))}
-                          aria-label={collapsed ? "Expand command output" : "Collapse command output"}
-                        >
-                          {collapsed ? "+" : "−"}
-                        </button>
-                        <code>{block.command || "Command"}</code>
-                        <span className={`command-block-result ${block.exitCode === 0 ? "is-success" : block.status === "running" ? "is-running" : "is-error"}`}>
-                          {block.status === "running" ? "running" : block.exitCode === null ? "done" : `exit ${block.exitCode}`}
-                        </span>
-                      </header>
-                      {!collapsed && (
-                        <>
-                          {block.cwd && <div className="command-block-cwd">{block.cwd}</div>}
-                          <pre>{cleanOutput || "No output"}</pre>
-                        </>
-                      )}
-                      <footer>
-                        <button type="button" onClick={() => copyBlockText(block.command, "Command")}>Copy command</button>
-                        <button type="button" disabled={!cleanOutput} onClick={() => copyBlockText(cleanOutput, "Output")}>Copy output</button>
-                        <button type="button" onClick={() => rerunBlock(block.command)}>Run again</button>
-                      </footer>
-                    </article>
-                  );
-                })}
-              </div>
-            )}
+          <div ref={containerRef} className="terminal-host" />
+        </div>
+
+        {blocksOpen && commandBlocks.length > 0 && (
+          <aside className="command-block-drawer">
+            <header className="command-block-drawer-header">
+              <div><strong>Command blocks</strong><span>{commandBlocks.length} captured</span></div>
+              <button type="button" aria-label="Close command blocks" onClick={() => setBlocksOpen(false)}>×</button>
+            </header>
+            <div className="command-block-list">
+              {[...commandBlocks].reverse().map((block) => {
+                const collapsed = collapsedBlocks[block.id] ?? block.status === "finished";
+                const cleanOutput = block.output.replace(/\x1b(?:\[[0-?]*[ -/]*[@-~]|\][^\x07]*(?:\x07|\x1b\\))/g, "").trim();
+                return (
+                  <article key={block.id} className={`command-block is-${block.status}`}>
+                    <header>
+                      <button
+                        type="button"
+                        className="command-block-collapse"
+                        onClick={() => setCollapsedBlocks((current) => ({ ...current, [block.id]: !collapsed }))}
+                        aria-label={collapsed ? "Expand command output" : "Collapse command output"}
+                      >
+                        {collapsed ? "+" : "−"}
+                      </button>
+                      <code>{block.command || "Command"}</code>
+                      <span className={`command-block-result ${block.exitCode === 0 ? "is-success" : block.status === "running" ? "is-running" : "is-error"}`}>
+                        {block.status === "running" ? "running" : block.exitCode === null ? "done" : `exit ${block.exitCode}`}
+                      </span>
+                    </header>
+                    {!collapsed && (
+                      <>
+                        {block.cwd && <div className="command-block-cwd">{block.cwd}</div>}
+                        <pre>{cleanOutput || "No output"}</pre>
+                        {block.outputTruncated && <div className="command-block-truncated">Output limited to 1,000,000 characters. Full output remains in the terminal scrollback.</div>}
+                      </>
+                    )}
+                    <footer>
+                      <button type="button" onClick={() => copyBlockText(block.command, "Command")}>Copy command</button>
+                      <button type="button" disabled={!cleanOutput} onClick={() => copyBlockText(cleanOutput, "Output")}>Copy output</button>
+                      <button type="button" onClick={() => rerunBlock(block.command)}>Run again</button>
+                    </footer>
+                  </article>
+                );
+              })}
+            </div>
           </aside>
         )}
-
-        <div ref={containerRef} className="terminal-host" />
       </div>
 
-      {sessionStatus && <div className={`terminal-status is-${sessionStatus.tone}`}>{sessionStatus.message}</div>}
+      {sessionStatus && <div className={`terminal-status is-${sessionStatus.tone}`}><span>{sessionStatus.message}</span><button type="button" aria-label="Dismiss message" onClick={() => setSessionStatus(null)}>×</button></div>}
     </section>
   );
 }

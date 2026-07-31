@@ -10,12 +10,9 @@ type Props = {
   onChooseFolder: () => void;
   onSelectFile: (path: string) => void;
   onSelectDirectory: (path: string) => void;
-  onOpenTerminal: () => void;
   onSaveCurrent: () => void;
   onLoad: (workspaceId: string) => void;
   onDelete: (workspaceId: string) => void;
-  onOpenPalette: () => void;
-  onOpenHistory: () => void;
 };
 
 export default function WorkspacePanel({
@@ -27,12 +24,9 @@ export default function WorkspacePanel({
   onChooseFolder,
   onSelectFile,
   onSelectDirectory,
-  onOpenTerminal,
   onSaveCurrent,
   onLoad,
   onDelete,
-  onOpenPalette,
-  onOpenHistory,
 }: Props) {
   if (!open) {
     return null;
@@ -45,7 +39,7 @@ export default function WorkspacePanel({
           <strong>Project context</strong>
           <p>Files available to AI sessions</p>
         </div>
-        <button type="button" className="sidebar-collapse" title="Collapse sidebar" onClick={onClose}>‹</button>
+        <button type="button" className="sidebar-collapse" title="Collapse project context" aria-label="Collapse project context" onClick={onClose}>‹</button>
       </div>
 
       <div className="workspace-root-card">
@@ -56,13 +50,7 @@ export default function WorkspacePanel({
         <button type="button" onClick={onChooseFolder}>{workspaceRoot ? "Change" : "Open folder"}</button>
       </div>
 
-      <div className="sidebar-actions">
-        <button type="button" onClick={onOpenTerminal}><span>Open terminal here</span><kbd>Ctrl T</kbd></button>
-        <button type="button" onClick={onOpenPalette}><span>Commands</span><kbd>Ctrl Shift P</kbd></button>
-        <button type="button" onClick={onOpenHistory}><span>History</span><kbd>Ctrl Shift R</kbd></button>
-      </div>
-
-      <div className="sidebar-section-heading"><span>Explorer</span></div>
+      <div className="sidebar-section-heading"><span>Files</span><small>Click a file to preview</small></div>
       {workspaceRoot ? (
         <FileTree
           root={workspaceRoot}
@@ -77,7 +65,7 @@ export default function WorkspacePanel({
       <div className="sidebar-section-heading"><span>Saved workspaces</span><button type="button" onClick={onSaveCurrent}>Save</button></div>
       <div className="workspace-list">
         {workspaces.length === 0 ? (
-          <div className="workspace-empty">还没有保存的工作区。</div>
+          <div className="workspace-empty">No saved workspaces yet.</div>
         ) : (
           workspaces.map((workspace) => (
             <div key={workspace.id} className="workspace-card">
@@ -85,7 +73,7 @@ export default function WorkspacePanel({
                 <strong>{workspace.name}</strong>
                 <span>{workspace.state.tabs.length} tabs · {new Date(workspace.updatedAt).toLocaleDateString()}</span>
               </button>
-              <button type="button" className="workspace-delete" onClick={() => onDelete(workspace.id)}>Delete</button>
+              <button type="button" className="workspace-delete" aria-label={`Delete ${workspace.name}`} title="Delete workspace" onClick={() => onDelete(workspace.id)}>×</button>
             </div>
           ))
         )}

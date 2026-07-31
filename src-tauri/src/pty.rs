@@ -2,7 +2,7 @@ use std::{
     collections::HashMap,
     io::{Read, Write},
     path::Path,
-    sync::Mutex,
+    sync::{Arc, Mutex},
     thread,
 };
 
@@ -23,7 +23,7 @@ use crate::models::{
 };
 
 pub struct SessionManager {
-    sessions: Mutex<HashMap<String, Session>>,
+    sessions: Arc<Mutex<HashMap<String, Session>>>,
 }
 
 struct Session {
@@ -35,7 +35,7 @@ struct Session {
 impl SessionManager {
     pub fn new() -> Self {
         Self {
-            sessions: Mutex::new(HashMap::new()),
+            sessions: Arc::new(Mutex::new(HashMap::new())),
         }
     }
 
@@ -140,10 +140,26 @@ impl SessionManager {
             }
         });
 
+        self.sessions
+            .lock()
+            .map_err(|_| "Session manager lock poisoned".to_string())?
+            .insert(
+                session_id.clone(),
+                Session {
+                    pid,
+                    master: pair.master,
+                    writer,
+                },
+            );
+
         if pid != 0 {
             let app_for_exit = app.clone();
+            let sessions_for_exit = Arc::clone(&self.sessions);
             thread::spawn(move || match wait_for_exit(pid) {
                 Ok(code) => {
+                    if let Ok(mut sessions) = sessions_for_exit.lock() {
+                        sessions.remove(&monitor_session_id);
+                    }
                     let _ = app_for_exit.emit(
                         "terminal/exit",
                         ExitEvent {
@@ -163,18 +179,6 @@ impl SessionManager {
                 }
             });
         }
-
-        self.sessions
-            .lock()
-            .map_err(|_| "Session manager lock poisoned".to_string())?
-            .insert(
-                session_id.clone(),
-                Session {
-                    pid,
-                    master: pair.master,
-                    writer,
-                },
-            );
 
         Ok(CreateSessionResponse {
             session_id,
@@ -219,12 +223,14 @@ impl SessionManager {
     }
 
     pub fn close_session(&self, session_id: &str) -> Result<(), String> {
-        let session = self
+        let Some(session) = self
             .sessions
             .lock()
             .map_err(|_| "Session manager lock poisoned".to_string())?
             .remove(session_id)
-            .ok_or_else(|| "Session not found".to_string())?;
+        else {
+            return Ok(());
+        };
 
         if session.pid != 0 {
             terminate_pid(session.pid)?;

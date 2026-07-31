@@ -48,7 +48,7 @@ export default function CommandPalette({ open, commands, onClose }: Props) {
 
   return (
     <div className="command-overlay" onMouseDown={onClose}>
-      <section className="command-palette" onMouseDown={(event) => event.stopPropagation()}>
+      <section className="command-palette" role="dialog" aria-modal="true" aria-label="Commands" onMouseDown={(event) => event.stopPropagation()}>
         <div className="command-input-row">
           <span>›</span>
           <input
