@@ -63,6 +63,10 @@ export async function openExternalUrl(url: string) {
   return invoke<void>("open_external_url", { url });
 }
 
+export async function revealInFileExplorer(path: string) {
+  return invoke<void>("reveal_in_file_explorer", { path });
+}
+
 export async function readClipboardText() {
   return invoke<string>("read_clipboard_text");
 }

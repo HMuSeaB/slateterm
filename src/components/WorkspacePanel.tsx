@@ -10,6 +10,7 @@ type Props = {
   onChooseFolder: () => void;
   onSelectFile: (path: string) => void;
   onSelectDirectory: (path: string) => void;
+  onOpenTerminal: (path: string) => void;
   onSaveCurrent: () => void;
   onLoad: (workspaceId: string) => void;
   onDelete: (workspaceId: string) => void;
@@ -24,6 +25,7 @@ export default function WorkspacePanel({
   onChooseFolder,
   onSelectFile,
   onSelectDirectory,
+  onOpenTerminal,
   onSaveCurrent,
   onLoad,
   onDelete,
@@ -57,6 +59,7 @@ export default function WorkspacePanel({
           selectedPath={selectedPath}
           onSelectFile={onSelectFile}
           onSelectDirectory={onSelectDirectory}
+          onOpenTerminal={onOpenTerminal}
         />
       ) : (
         <div className="workspace-empty">Open a folder to show its files.</div>

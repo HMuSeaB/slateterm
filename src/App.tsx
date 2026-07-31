@@ -845,6 +845,7 @@ export default function App() {
           onChooseFolder={() => void chooseWorkspaceFolder()}
           onSelectFile={(path) => void previewWorkspaceFile(path)}
           onSelectDirectory={selectWorkspaceDirectory}
+          onOpenTerminal={(path) => void openTab(selectedProfileId, profiles, path)}
           onSaveCurrent={saveNamedWorkspace}
           onLoad={(workspaceId) => void loadNamedWorkspace(workspaceId)}
           onDelete={deleteNamedWorkspace}

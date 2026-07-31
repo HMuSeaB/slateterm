@@ -9,6 +9,7 @@ import "@xterm/xterm/css/xterm.css";
 import { getSuggestion, recordCommand, type SuggestionResult } from "../lib/completionEngine";
 import {
   clipboardHasImage,
+  listDirectory,
   openExternalUrl,
   readClipboardImage,
   readClipboardText,
@@ -25,6 +26,7 @@ import type {
   CwdEvent,
   ErrorEvent,
   ExitEvent,
+  FileEntry,
   OutputEvent,
   PaneRuntimeMode,
   PaneSessionState,
@@ -64,6 +66,13 @@ type StatusBanner = {
   message: string;
 };
 
+type PathCompletion = {
+  basePath: string;
+  typedPath: string;
+  quote: string;
+  entries: FileEntry[];
+};
+
 const CLAUDE_IMAGE_ATTACH_SEQUENCE = "\x1bv";
 const ATTACHABLE_IMAGE_EXTENSIONS = new Set(["png", "bmp", "jpg", "jpeg", "gif", "webp"]);
 const IMAGE_PATH_EXTENSIONS = ATTACHABLE_IMAGE_EXTENSIONS;
@@ -93,6 +102,29 @@ function isClaudeCommand(command: string) {
   return /(?:^|[;&|]\s*)(?:&\s*)?(?:claude(?:\.cmd|\.exe)?|["'][^"']*[\\/]claude(?:\.cmd|\.exe)?["'])(?:\s|$)/.test(
     normalized,
   );
+}
+
+function parseCdPath(command: string, cwd?: string) {
+  const match = command.match(/^\s*cd(?:\s+|$)(["']?)([^"']*)$/i);
+  if (!match) return null;
+  const quote = match[1] || "";
+  const typedPath = match[2] || "";
+  const normalized = typedPath.replace(/\//g, "\\");
+  const separator = normalized.lastIndexOf("\\");
+  const directoryPart = separator >= 0 ? normalized.slice(0, separator + 1) : "";
+  const namePart = separator >= 0 ? normalized.slice(separator + 1) : normalized;
+  const absolute = /^[a-zA-Z]:\\/.test(normalized) || normalized.startsWith("\\\\");
+  const baseRoot = absolute ? "" : `${cwd || ""}${cwd && directoryPart ? "\\" : ""}`;
+  const basePath = `${baseRoot}${directoryPart}`.replace(/[\\]+$/, "") || (absolute ? normalized.slice(0, 3) : cwd || "");
+  if (!basePath) return null;
+  return { basePath, namePart, quote, typedPath };
+}
+
+function completionValue(entry: FileEntry, completion: PathCompletion) {
+  const separator = Math.max(completion.typedPath.lastIndexOf("\\"), completion.typedPath.lastIndexOf("/"));
+  const prefix = separator >= 0 ? completion.typedPath.slice(0, separator + 1) : "";
+  const value = `${prefix}${entry.name}\\`;
+  return `${completion.quote}${value}`;
 }
 
 async function imageBlobToPngBytes(blob: Blob) {
@@ -217,12 +249,18 @@ export default function TerminalPane({
 
   const [inputBuffer, setInputBuffer] = useState("");
   const [suggestion, setSuggestion] = useState<SuggestionResult | null>(null);
+  const [pathCompletion, setPathCompletion] = useState<PathCompletion | null>(null);
+  const [pathCompletionIndex, setPathCompletionIndex] = useState(0);
   const [isDragging, setIsDragging] = useState(false);
   const [runtimeMode, setRuntimeMode] = useState<"shell" | "claude">(
     profileCategory === "ai" ? "claude" : "shell",
   );
   const suggestionRef = useRef<SuggestionResult | null>(null);
+  const pathCompletionRef = useRef<PathCompletion | null>(null);
+  const pathCompletionIndexRef = useRef(0);
+  const pathCompletionRequestRef = useRef(0);
   const inputBufferRef = useRef("");
+  const cwdRef = useRef(cwd);
   const activeRef = useRef(active);
   const profileCategoryRef = useRef(profileCategory);
   const runtimeModeRef = useRef<"shell" | "claude">(profileCategory === "ai" ? "claude" : "shell");
@@ -240,6 +278,10 @@ export default function TerminalPane({
   useEffect(() => {
     onCwdChangeRef.current = onCwdChange;
   }, [onCwdChange]);
+
+  useEffect(() => {
+    cwdRef.current = cwd;
+  }, [cwd]);
 
   useEffect(() => {
     onRuntimeModeChangeRef.current = onRuntimeModeChange;
@@ -294,12 +336,52 @@ export default function TerminalPane({
     focusTerminal();
   }
 
+  function setCompletion(completion: PathCompletion | null, index = 0) {
+    pathCompletionRef.current = completion;
+    pathCompletionIndexRef.current = index;
+    setPathCompletion(completion);
+    setPathCompletionIndex(index);
+  }
+
   function updateBuffer(nextVal: string) {
     inputBufferRef.current = nextVal;
     setInputBuffer(nextVal);
     const nextSugg = getSuggestion(nextVal);
     suggestionRef.current = nextSugg;
     setSuggestion(nextSugg);
+
+    const requestId = ++pathCompletionRequestRef.current;
+    if (isClaudeRuntime()) {
+      setCompletion(null);
+      return;
+    }
+    const parsed = parseCdPath(nextVal, cwdRef.current);
+    if (!parsed) {
+      setCompletion(null);
+      return;
+    }
+    void listDirectory(parsed.basePath)
+      .then((items) => {
+        if (requestId !== pathCompletionRequestRef.current) return;
+        const entries = items
+          .filter((entry) => entry.isDirectory && entry.name.toLowerCase().startsWith(parsed.namePart.toLowerCase()))
+          .slice(0, 8);
+        setCompletion(entries.length > 0 ? { basePath: parsed.basePath, typedPath: parsed.typedPath, quote: parsed.quote, entries } : null);
+      })
+      .catch(() => {
+        if (requestId === pathCompletionRequestRef.current) setCompletion(null);
+      });
+  }
+
+  function acceptPathCompletion(entry: FileEntry) {
+    const completion = pathCompletionRef.current;
+    if (!completion) return;
+    const currentArgument = `${completion.quote}${completion.typedPath}`;
+    const nextArgument = completionValue(entry, completion);
+    const suffix = nextArgument.slice(currentArgument.length);
+    void writeInput(sessionId, suffix);
+    updateBuffer(inputBufferRef.current + suffix);
+    focusTerminal();
   }
 
   async function attachClipboardImageToClaude(message = "Attaching image to Claude Code...") {
@@ -555,6 +637,28 @@ export default function TerminalPane({
       const key = event.key.toLowerCase();
       const hasSelection = terminal.hasSelection();
       const activeSugg = suggestionRef.current;
+      const activePathCompletion = pathCompletionRef.current;
+
+      if (activePathCompletion) {
+        if (event.key === "ArrowDown" || event.key === "ArrowUp") {
+          event.preventDefault();
+          const direction = event.key === "ArrowDown" ? 1 : -1;
+          const nextIndex = (pathCompletionIndexRef.current + direction + activePathCompletion.entries.length) % activePathCompletion.entries.length;
+          pathCompletionIndexRef.current = nextIndex;
+          setPathCompletionIndex(nextIndex);
+          return false;
+        }
+        if (event.key === "Tab") {
+          event.preventDefault();
+          acceptPathCompletion(activePathCompletion.entries[pathCompletionIndexRef.current]);
+          return false;
+        }
+        if (event.key === "Escape") {
+          event.preventDefault();
+          setCompletion(null);
+          return false;
+        }
+      }
 
       if ((event.key === "Tab" || event.key === "ArrowRight" || (event.ctrlKey && event.code === "Space")) && activeSugg) {
         event.preventDefault();
@@ -955,7 +1059,31 @@ export default function TerminalPane({
           </>
         )}
 
-        {suggestion && (
+        {pathCompletion && (
+          <div className="path-completion-popover">
+            <header><span>PATHS</span><small>↑↓ choose · Tab insert · Esc close</small></header>
+            <div className="path-completion-list">
+              {pathCompletion.entries.map((entry, index) => (
+                <button
+                  key={entry.path}
+                  type="button"
+                  className={index === pathCompletionIndex ? "is-active" : ""}
+                  title={entry.path}
+                  onMouseDown={(event) => event.preventDefault()}
+                  onClick={() => acceptPathCompletion(entry)}
+                  onMouseEnter={() => {
+                    pathCompletionIndexRef.current = index;
+                    setPathCompletionIndex(index);
+                  }}
+                >
+                  <span>›</span><strong>{entry.name}</strong><small>{entry.path}</small>
+                </button>
+              ))}
+            </div>
+          </div>
+        )}
+
+        {suggestion && !pathCompletion && (
           <div className="autosuggest-hint">
             <span className="hint-label">SLATE SUGGESTION</span>
             <span className="hint-matched">{inputBuffer}</span>

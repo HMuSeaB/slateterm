@@ -211,14 +211,9 @@ fn read_text_file(path: String) -> Result<FilePreview, String> {
     })
 }
 
-#[tauri::command]
-fn open_external_url(url: String) -> Result<(), String> {
-    if !(url.starts_with("http://") || url.starts_with("https://")) {
-        return Err("Only http and https links can be opened".into());
-    }
-
+fn shell_open(target: &str) -> Result<(), String> {
     let operation = wide_null("open");
-    let target = wide_null(&url);
+    let target = wide_null(target);
     let result = unsafe {
         ShellExecuteW(
             ptr::null_mut(),
@@ -231,7 +226,50 @@ fn open_external_url(url: String) -> Result<(), String> {
     } as isize;
 
     if result <= 32 {
-        Err(format!("Windows could not open this link (code {result})"))
+        Err(format!(
+            "Windows could not open this target (code {result})"
+        ))
+    } else {
+        Ok(())
+    }
+}
+
+#[tauri::command]
+fn open_external_url(url: String) -> Result<(), String> {
+    if !(url.starts_with("http://") || url.starts_with("https://")) {
+        return Err("Only http and https links can be opened".into());
+    }
+    shell_open(&url)
+}
+
+#[tauri::command]
+fn reveal_in_file_explorer(path: String) -> Result<(), String> {
+    let path = std::path::Path::new(&path);
+    if !path.exists() {
+        return Err("The requested path does not exist".into());
+    }
+
+    if path.is_dir() {
+        return shell_open(&path.to_string_lossy());
+    }
+
+    let explorer = wide_null("explorer.exe");
+    let parameters = wide_null(&format!("/select,\"{}\"", path.to_string_lossy()));
+    let result = unsafe {
+        ShellExecuteW(
+            ptr::null_mut(),
+            ptr::null(),
+            explorer.as_ptr(),
+            parameters.as_ptr(),
+            ptr::null(),
+            SW_SHOWNORMAL,
+        )
+    } as isize;
+
+    if result <= 32 {
+        Err(format!(
+            "Windows could not reveal this file (code {result})"
+        ))
     } else {
         Ok(())
     }
@@ -543,6 +581,7 @@ fn main() {
             save_temp_image,
             read_image_file,
             open_external_url,
+            reveal_in_file_explorer,
             read_clipboard_text,
             clipboard_has_image,
             read_clipboard_image,
