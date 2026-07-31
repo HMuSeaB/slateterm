@@ -24,8 +24,8 @@ use windows_sys::Win32::{
     },
     UI::{
         Shell::{
-            SHBrowseForFolderW, SHGetPathFromIDListW, ShellExecuteW, BIF_NEWDIALOGSTYLE,
-            BIF_RETURNONLYFSDIRS, BROWSEINFOW,
+            SHBrowseForFolderW, SHGetPathFromIDListW, SetCurrentProcessExplicitAppUserModelID,
+            ShellExecuteW, BIF_NEWDIALOGSTYLE, BIF_RETURNONLYFSDIRS, BROWSEINFOW,
         },
         WindowsAndMessaging::SW_SHOWNORMAL,
     },
@@ -549,6 +549,13 @@ fn write_clipboard_text(text: String) -> Result<(), String> {
 }
 
 fn main() {
+    let app_user_model_id = wide_null("com.archive.slateterm.desktop");
+    let app_id_result =
+        unsafe { SetCurrentProcessExplicitAppUserModelID(app_user_model_id.as_ptr()) };
+    if app_id_result < 0 {
+        eprintln!("SlateTerm setup warning: could not set the Windows AppUserModelID ({app_id_result:#x})");
+    }
+
     let shell_profiles = shell_profiles();
     let profiles = default_profiles();
 
@@ -560,6 +567,15 @@ fn main() {
         })
         .setup(|app| {
             if let Some(window) = app.get_webview_window("main") {
+                if let Some(icon) = app.default_window_icon().cloned() {
+                    if let Err(error) = window.set_icon(icon) {
+                        eprintln!(
+                            "SlateTerm setup warning: could not set the main window icon ({error})"
+                        );
+                    }
+                } else {
+                    eprintln!("SlateTerm setup warning: the default window icon was not available");
+                }
                 let _ = window.show();
             } else {
                 eprintln!("SlateTerm setup warning: main window was not available");

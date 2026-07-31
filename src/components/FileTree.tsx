@@ -1,4 +1,5 @@
-import { useEffect, useRef, useState } from "react";
+import { useEffect, useLayoutEffect, useRef, useState } from "react";
+import { createPortal } from "react-dom";
 import { listDirectory, revealInFileExplorer } from "../lib/tauri";
 import type { FileEntry } from "../lib/types";
 
@@ -132,7 +133,7 @@ export default function FileTree({ root, selectedPath, onSelectFile, onSelectDir
     };
   }, [contextMenu]);
 
-  useEffect(() => {
+  useLayoutEffect(() => {
     const menu = menuRef.current;
     if (!menu || !contextMenu) return;
     const rect = menu.getBoundingClientRect();
@@ -166,7 +167,7 @@ export default function FileTree({ root, selectedPath, onSelectFile, onSelectDir
           />
         ))}
       </div>
-      {contextMenu && (
+      {contextMenu && createPortal(
         <div
           ref={menuRef}
           className="file-context-menu"
@@ -197,7 +198,8 @@ export default function FileTree({ root, selectedPath, onSelectFile, onSelectDir
             <span>›_</span>
             <div><strong>Open terminal here</strong><small>Start a new tab in this folder</small></div>
           </button>
-        </div>
+        </div>,
+        document.querySelector<HTMLElement>(".app-shell") ?? document.body,
       )}
     </>
   );

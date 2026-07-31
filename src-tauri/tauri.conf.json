@@ -29,7 +29,10 @@
   },
   "bundle": {
     "active": false,
-    "targets": "nsis"
+    "targets": "nsis",
+    "icon": [
+      "icons/icon.ico"
+    ]
   }
 }
 
