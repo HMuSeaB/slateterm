@@ -30,6 +30,7 @@ export type SavedTabState = {
   profileId: string;
   title?: string;
   panes: SavedPaneState[];
+  activePaneIndex?: number;
 };
 
 export type WorkspaceState = {

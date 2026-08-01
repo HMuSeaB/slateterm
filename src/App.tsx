@@ -11,7 +11,6 @@ import {
   closeSession,
   createSession,
   listProfiles,
-  listShellProfiles,
   loadSettings,
   readTextFile,
   saveSettings,
@@ -137,28 +136,10 @@ export default function App() {
   useEffect(() => {
     let cancelled = false;
 
-    async function hydrateProfiles() {
-      try {
-        const loadedProfiles = await listProfiles();
-        if (cancelled) {
-          return;
-        }
-
-        setProfiles(loadedProfiles);
-        setSelectedProfileId((current) => resolveProfileId(current, loadedProfiles));
-        setSettings((current) => {
-          const startupId = resolveStartupProfileId(current.defaultProfileId, loadedProfiles);
-          return current.defaultProfileId === startupId ? current : { ...current, defaultProfileId: startupId };
-        });
-      } catch (error) {
-        console.error("Failed to hydrate full profile list", error);
-      }
-    }
-
     async function bootstrap() {
       try {
-        const [loadedShells, loadedSettings] = await Promise.all([
-          listShellProfiles(),
+        const [loadedProfiles, loadedSettings] = await Promise.all([
+          listProfiles(),
           loadSettings().catch(() => DEFAULT_SETTINGS),
         ]);
 
@@ -167,7 +148,7 @@ export default function App() {
         }
 
         const normalizedSettings = normalizeSettings(loadedSettings);
-        const startupProfileId = resolveStartupProfileId(normalizedSettings.defaultProfileId, loadedShells);
+        const startupProfileId = resolveStartupProfileId(normalizedSettings.defaultProfileId, loadedProfiles);
         const resolvedSettings =
           startupProfileId === normalizedSettings.defaultProfileId
             ? normalizedSettings
@@ -176,14 +157,13 @@ export default function App() {
                 defaultProfileId: startupProfileId,
               };
 
-        setProfiles(loadedShells);
+        setProfiles(loadedProfiles);
         setSettings(resolvedSettings);
         setSelectedProfileId(startupProfileId);
-        const restored = await restoreWorkspaceState(loadedShells, resolvedSettings);
+        const restored = await restoreWorkspaceState(loadedProfiles, resolvedSettings);
         if (!restored) {
-          await openStartupTab(startupProfileId, loadedShells, resolvedSettings);
+          await openStartupTab(startupProfileId, loadedProfiles, resolvedSettings);
         }
-        void hydrateProfiles();
         setBooting(false);
       } catch (error) {
         console.error("SlateTerm bootstrap failed", error);
@@ -220,6 +200,7 @@ export default function App() {
                 sizeRatio: p.sizeRatio,
                 title: p.title,
               })),
+              activePaneIndex: Math.max(0, t.panes.findIndex((pane) => pane.id === t.activePaneId)),
             })),
           }
         : null;
@@ -268,7 +249,10 @@ export default function App() {
             sizeRatio: savedPane.sizeRatio ?? 1,
             title: savedPane.title || profileLabel(paneProfileId, sourceProfiles),
             cwd: session.cwd || paneCwd || undefined,
-            runtimeMode: sourceProfiles.find((profile) => profile.id === paneProfileId)?.category === "ai" ? "claude" : "shell",
+            runtimeMode:
+              sourceProfiles.find((profile) => profile.id === paneProfileId)?.category === "ai"
+                ? "claude"
+                : "shell",
             sessionState: "running",
           });
         }
@@ -279,7 +263,11 @@ export default function App() {
             profileId: resolvedProfileId,
             title: tabTitle,
             panes: restoredPanes,
-            activePaneId: restoredPanes[0].id,
+            activePaneId:
+              restoredPanes[Math.min(
+                Math.max(0, savedTab.activePaneIndex ?? 0),
+                restoredPanes.length - 1,
+              )].id,
           });
         }
       }
@@ -314,6 +302,7 @@ export default function App() {
           sizeRatio: pane.sizeRatio,
           title: pane.title,
         })),
+        activePaneIndex: Math.max(0, tab.panes.findIndex((pane) => pane.id === tab.activePaneId)),
       })),
     };
   }
@@ -898,6 +887,7 @@ export default function App() {
                         sessionId={pane.sessionId}
                         settings={settings}
                         profileCategory={profiles.find((profile) => profile.id === pane.profileId)?.category ?? "shell"}
+                        runtimeMode={pane.runtimeMode}
                         paneTitle={pane.title ?? `Pane ${index + 1}`}
                         cwd={pane.cwd}
                         sessionState={pane.sessionState}

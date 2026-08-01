@@ -58,6 +58,7 @@ pub struct SavedTabState {
     pub profile_id: String,
     pub title: Option<String>,
     pub panes: Vec<SavedPaneState>,
+    pub active_pane_index: usize,
 }
 
 impl Default for SavedTabState {
@@ -66,6 +67,7 @@ impl Default for SavedTabState {
             profile_id: "pwsh".into(),
             title: None,
             panes: Vec::new(),
+            active_pane_index: 0,
         }
     }
 }
@@ -438,4 +440,26 @@ fn find_command_path(candidates: &[&str]) -> Option<String> {
 
 fn powershell_invocation(path: &str) -> String {
     format!("& '{}'", path.replace('\'', "''"))
+}
+
+#[cfg(test)]
+mod tests {
+    use super::{SavedPaneState, SavedTabState};
+
+    #[test]
+    fn saved_tab_state_preserves_active_pane_index() {
+        let tab = SavedTabState {
+            profile_id: "claude".into(),
+            title: Some("Claude Code".into()),
+            panes: vec![SavedPaneState::default(), SavedPaneState::default()],
+            active_pane_index: 1,
+        };
+
+        let json = serde_json::to_string(&tab).expect("serialize saved tab state");
+        assert!(json.contains("\"activePaneIndex\":1"));
+
+        let restored: SavedTabState =
+            serde_json::from_str(&json).expect("deserialize saved tab state");
+        assert_eq!(restored.active_pane_index, 1);
+    }
 }

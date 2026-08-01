@@ -13,7 +13,6 @@ import {
   openExternalUrl,
   readClipboardImage,
   readClipboardText,
-  readImageFile,
   resizeSession,
   saveTempImage,
   writeClipboardImageFile,
@@ -38,6 +37,7 @@ type Props = {
   sessionId: string;
   settings: Settings;
   profileCategory: "shell" | "ai";
+  runtimeMode: PaneRuntimeMode;
   paneTitle?: string;
   cwd?: string;
   sessionState: PaneSessionState;
@@ -74,24 +74,7 @@ type PathCompletion = {
 };
 
 const CLAUDE_IMAGE_ATTACH_SEQUENCE = "\x1bv";
-const ATTACHABLE_IMAGE_EXTENSIONS = new Set(["png", "bmp", "jpg", "jpeg", "gif", "webp"]);
-const IMAGE_PATH_EXTENSIONS = ATTACHABLE_IMAGE_EXTENSIONS;
 const MAX_COMMAND_BLOCK_OUTPUT = 1_000_000;
-
-function imageExtension(path: string) {
-  const normalized = path.split(/[?#]/, 1)[0];
-  const filename = normalized.split(/[\\/]/).slice(-1)[0] ?? "";
-  const dotIndex = filename.lastIndexOf(".");
-  return dotIndex >= 0 ? filename.slice(dotIndex + 1).toLowerCase() : "";
-}
-
-function isAttachableImagePath(path: string) {
-  return ATTACHABLE_IMAGE_EXTENSIONS.has(imageExtension(path));
-}
-
-function isImagePath(path: string) {
-  return IMAGE_PATH_EXTENSIONS.has(imageExtension(path));
-}
 
 function formatTerminalPaths(paths: string[]) {
   return paths.map((path) => (path.includes(" ") ? `"${path}"` : path)).join(" ");
@@ -150,15 +133,6 @@ async function imageBlobToPngBytes(blob: Blob) {
   }
 }
 
-function imageMimeType(path: string) {
-  const extension = imageExtension(path);
-  if (extension === "jpg" || extension === "jpeg") return "image/jpeg";
-  if (extension === "gif") return "image/gif";
-  if (extension === "webp") return "image/webp";
-  if (extension === "bmp") return "image/bmp";
-  return "image/png";
-}
-
 function themeForMode(theme: Settings["theme"]) {
   if (theme === "paper") {
     return {
@@ -215,6 +189,7 @@ export default function TerminalPane({
   sessionId,
   settings,
   profileCategory,
+  runtimeMode: persistedRuntimeMode,
   paneTitle,
   cwd,
   sessionState,
@@ -242,7 +217,7 @@ export default function TerminalPane({
   const [searchOpen, setSearchOpen] = useState(false);
   const [query, setQuery] = useState("");
   const [searchStatus, setSearchStatus] = useState<string | null>(null);
-  const [sessionStatus, setSessionStatus] = useState<StatusBanner | null>(null);
+  const [sessionStatus, setSessionStatusState] = useState<StatusBanner | null>(null);
   const [blocksOpen, setBlocksOpen] = useState(false);
   const [commandBlocks, setCommandBlocks] = useState<CommandBlock[]>([]);
   const [collapsedBlocks, setCollapsedBlocks] = useState<Record<string, boolean>>({});
@@ -252,9 +227,7 @@ export default function TerminalPane({
   const [pathCompletion, setPathCompletion] = useState<PathCompletion | null>(null);
   const [pathCompletionIndex, setPathCompletionIndex] = useState(0);
   const [isDragging, setIsDragging] = useState(false);
-  const [runtimeMode, setRuntimeMode] = useState<"shell" | "claude">(
-    profileCategory === "ai" ? "claude" : "shell",
-  );
+  const [runtimeMode, setRuntimeMode] = useState<PaneRuntimeMode>(persistedRuntimeMode);
   const suggestionRef = useRef<SuggestionResult | null>(null);
   const pathCompletionRef = useRef<PathCompletion | null>(null);
   const pathCompletionIndexRef = useRef(0);
@@ -262,10 +235,13 @@ export default function TerminalPane({
   const inputBufferRef = useRef("");
   const cwdRef = useRef(cwd);
   const activeRef = useRef(active);
+  const pointerInsideRef = useRef(false);
+  const nativeDragTargetRef = useRef(false);
   const profileCategoryRef = useRef(profileCategory);
-  const runtimeModeRef = useRef<"shell" | "claude">(profileCategory === "ai" ? "claude" : "shell");
+  const runtimeModeRef = useRef<PaneRuntimeMode>(persistedRuntimeMode);
   const nativeDragActiveRef = useRef(false);
   const lastNativeDropRef = useRef(0);
+  const sessionStatusTimerRef = useRef<number | null>(null);
 
   useEffect(() => {
     onFontDeltaRef.current = onFontDelta;
@@ -297,15 +273,43 @@ export default function TerminalPane({
 
   useEffect(() => {
     profileCategoryRef.current = profileCategory;
-    if (profileCategory === "ai") {
-      setPaneRuntimeMode("claude");
-    }
   }, [profileCategory]);
+
+  useEffect(() => {
+    runtimeModeRef.current = persistedRuntimeMode;
+    setRuntimeMode(persistedRuntimeMode);
+  }, [persistedRuntimeMode]);
 
   function setPaneRuntimeMode(mode: PaneRuntimeMode) {
     runtimeModeRef.current = mode;
     setRuntimeMode(mode);
     onRuntimeModeChangeRef.current?.(mode);
+  }
+
+  function setSessionStatus(status: StatusBanner | null) {
+    if (sessionStatusTimerRef.current !== null) {
+      window.clearTimeout(sessionStatusTimerRef.current);
+      sessionStatusTimerRef.current = null;
+    }
+
+    setSessionStatusState(status);
+    if (!status) {
+      return;
+    }
+
+    const duration = status.tone === "error" ? 10_000 : 3_000;
+    sessionStatusTimerRef.current = window.setTimeout(() => {
+      sessionStatusTimerRef.current = null;
+      setSessionStatusState((current) => (
+        current === status ? null : current
+      ));
+    }, duration);
+  }
+
+  function clearTransientStatus() {
+    setSessionStatusState((current) => (
+      current?.tone === "info" ? null : current
+    ));
   }
 
   function isClaudeRuntime() {
@@ -389,38 +393,9 @@ export default function TerminalPane({
     await writeInput(sessionId, CLAUDE_IMAGE_ATTACH_SEQUENCE);
   }
 
-  async function attachImageFileToClaude(path: string) {
-    setSessionStatus({ tone: "info", message: "Preparing dropped image for Claude Code..." });
-    const extension = imageExtension(path);
-    let attachmentPath = path;
-    if (extension !== "png" && extension !== "bmp") {
-      const sourceBytes = await readImageFile(path);
-      const pngBytes = await imageBlobToPngBytes(new Blob([sourceBytes], { type: imageMimeType(path) }));
-      attachmentPath = await saveTempImage(pngBytes, "png");
-    }
-    await writeClipboardImageFile(attachmentPath);
-    await attachClipboardImageToClaude("Attaching dropped image to Claude Code...");
-  }
-
   async function handleDroppedPaths(paths: string[]) {
     if (paths.length === 0) {
       return;
-    }
-
-    if (paths.length === 1 && isAttachableImagePath(paths[0])) {
-      if (!isClaudeRuntime()) {
-        throw new Error("Start Claude Code before dropping an image attachment.");
-      }
-      await attachImageFileToClaude(paths[0]);
-      return;
-    }
-    const imagePaths = paths.filter(isImagePath);
-    if (imagePaths.length > 0) {
-      throw new Error(
-        isAttachableImagePath(imagePaths[0])
-          ? "Drop one image at a time to attach it to Claude Code."
-          : "This image format is not supported for attachment.",
-      );
     }
 
     const formattedPaths = formatTerminalPaths(paths);
@@ -450,7 +425,8 @@ export default function TerminalPane({
         }
         const pngBytes = await imageBlobToPngBytes(imageFile);
         const imagePath = await saveTempImage(pngBytes, "png");
-        await attachImageFileToClaude(imagePath);
+        await writeClipboardImageFile(imagePath);
+        await attachClipboardImageToClaude("Attaching pasted image to Claude Code...");
         return;
       }
       const text = eventText || (await readClipboardText());
@@ -607,7 +583,7 @@ export default function TerminalPane({
     };
 
     const dataDispose = terminal.onData((data) => {
-      setSessionStatus(null);
+      clearTransientStatus();
       void writeInput(sessionId, data);
 
       if (data === "\r" || data === "\n") {
@@ -774,6 +750,10 @@ export default function TerminalPane({
         cancelAnimationFrame(fitRafRef.current);
         fitRafRef.current = null;
       }
+      if (sessionStatusTimerRef.current !== null) {
+        window.clearTimeout(sessionStatusTimerRef.current);
+        sessionStatusTimerRef.current = null;
+      }
       bindingRef.current?.terminal.dispose();
       bindingRef.current = null;
     };
@@ -835,7 +815,7 @@ export default function TerminalPane({
       if (!mounted || event.payload.sessionId !== sessionId) {
         return;
       }
-      setSessionStatus(null);
+      clearTransientStatus();
       bindingRef.current?.terminal.write(event.payload.chunk);
     });
 
@@ -930,23 +910,61 @@ export default function TerminalPane({
       });
     });
 
-    const unlistenDrop = getCurrentWebview().onDragDropEvent((event) => {
-      if (!mounted || !activeRef.current) {
+    const webview = getCurrentWebview();
+    let scaleFactor = window.devicePixelRatio || 1;
+    void webview.window.scaleFactor().then((value) => {
+      if (mounted && value > 0) {
+        scaleFactor = value;
+      }
+    });
+
+    function isNativeDragTarget(position: { x: number; y: number }) {
+      const container = containerRef.current?.closest<HTMLElement>(".terminal-shell");
+      if (!container) {
+        return activeRef.current;
+      }
+      const logicalPosition = {
+        x: position.x / scaleFactor,
+        y: position.y / scaleFactor,
+      };
+      const rect = container.getBoundingClientRect();
+      return (
+        logicalPosition.x >= rect.left
+        && logicalPosition.x <= rect.right
+        && logicalPosition.y >= rect.top
+        && logicalPosition.y <= rect.bottom
+      );
+    }
+
+    const unlistenDrop = webview.onDragDropEvent((event) => {
+      if (!mounted) {
         return;
       }
       if (event.payload.type === "enter" || event.payload.type === "over") {
-        nativeDragActiveRef.current = true;
-        setIsDragging(true);
+        const isTarget = isNativeDragTarget(event.payload.position);
+        nativeDragTargetRef.current = isTarget;
+        nativeDragActiveRef.current = isTarget;
+        setIsDragging(isTarget);
         return;
       }
       if (event.payload.type === "leave") {
+        nativeDragTargetRef.current = false;
         nativeDragActiveRef.current = false;
         setIsDragging(false);
         return;
       }
+
+      const isTarget = isNativeDragTarget(event.payload.position)
+        || nativeDragTargetRef.current
+        || (activeRef.current && pointerInsideRef.current);
+      nativeDragTargetRef.current = false;
       nativeDragActiveRef.current = false;
-      lastNativeDropRef.current = performance.now();
       setIsDragging(false);
+      if (!isTarget) {
+        return;
+      }
+      lastNativeDropRef.current = performance.now();
+      onActivate();
       void handleDroppedPaths(event.payload.paths).catch((error) =>
         setSessionStatus({ tone: "error", message: `Drop failed: ${String(error)}` }),
       );
@@ -968,6 +986,12 @@ export default function TerminalPane({
     <section
       className={`terminal-shell ${active ? "is-active" : ""}`}
       onMouseDown={onActivate}
+      onPointerEnter={() => {
+        pointerInsideRef.current = true;
+      }}
+      onPointerLeave={() => {
+        pointerInsideRef.current = false;
+      }}
       onPasteCapture={handlePasteCapture}
       onDragOver={handleDragOver}
       onDragLeave={handleDragLeave}
@@ -1000,12 +1024,8 @@ export default function TerminalPane({
         {isDragging && (
           <div className="drag-drop-overlay">
             <div className="drop-badge">
-              <strong>{runtimeMode === "claude" ? "DROP IMAGE FOR CLAUDE" : "DROP FILE INTO TERMINAL"}</strong>
-              <span>
-                {runtimeMode === "claude"
-                  ? "Drop one PNG, JPG, WebP, GIF, or BMP image to attach it"
-                  : "Start Claude Code before dropping an image attachment"}
-              </span>
+              <strong>DROP FILE PATH INTO TERMINAL</strong>
+              <span>Files and folders are inserted as absolute paths</span>
             </div>
           </div>
         )}
