@@ -12,7 +12,7 @@
 - Refine Graphite and Paper themes with softer tactile surfaces, rounded controls, improved scrollbars, responsive drawers, and consistent dialogs.
 - Fix Windows taskbar identity and icon rendering with a stable AppUserModelID, explicit window icon assignment, and a multi-size ICO.
 - Improve startup diagnostics and frontend resource tracking to avoid stale or empty embedded assets.
-- Stabilize frontend build filenames and preserve Rust compiler temporary files so intercepted cleanup does not flood the Windows Recycle Bin.
+- Stabilize frontend build filenames to avoid accumulating stale hashed assets between builds.
 - Standardize dependency installation, frontend builds, and Tauri build hooks on pnpm.
 
 ## v0.1.1 - 2026-03-29

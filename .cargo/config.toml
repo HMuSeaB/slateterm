@@ -1,5 +1,0 @@
-# Keep rustc/linker intermediate files instead of deleting them after each build.
-# In this environment, intercepted deletions are moved to the Windows Recycle Bin,
-# which can otherwise create thousands of recycle-bin entries per Cargo invocation.
-[build]
-rustflags = ["-C", "save-temps=yes"]
