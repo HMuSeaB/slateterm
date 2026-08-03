@@ -1,6 +1,10 @@
 node_modules/
 dist/
+dist-stable/
+outputs/
 src-tauri/target/
+.workbuddy/
+.antigravity_docs/
 .vscode/
 *.log
 Thumbs.db

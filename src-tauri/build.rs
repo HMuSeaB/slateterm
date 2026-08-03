@@ -18,6 +18,6 @@ fn track_frontend_files(path: &Path) {
 }
 
 fn main() {
-    track_frontend_files(Path::new("../dist"));
+    track_frontend_files(Path::new("../dist-stable"));
     tauri_build::build()
 }

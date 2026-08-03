@@ -1,7 +1,7 @@
 {
   "name": "slateterm",
   "private": true,
-  "version": "0.1.1",
+  "version": "0.1.2",
   "packageManager": "pnpm@10.24.0",
   "engines": {
     "node": ">=20",
@@ -11,6 +11,7 @@
   "scripts": {
     "dev": "vite",
     "build": "tsc && vite build",
+    "build:desktop": "tauri build",
     "preview": "vite preview",
     "tauri": "tauri"
   },

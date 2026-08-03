@@ -1,13 +1,13 @@
 {
   "$schema": "https://schema.tauri.app/config/2",
   "productName": "SlateTerm",
-  "version": "0.1.1",
+  "version": "0.1.2",
   "identifier": "com.archive.slateterm",
   "build": {
     "beforeDevCommand": "pnpm dev",
     "beforeBuildCommand": "pnpm build",
     "devUrl": "http://127.0.0.1:1420",
-    "frontendDist": "../dist"
+    "frontendDist": "../dist-stable"
   },
   "app": {
     "windows": [

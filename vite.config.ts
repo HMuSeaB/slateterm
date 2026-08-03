@@ -11,8 +11,20 @@ export default defineConfig({
     strictPort: true,
   },
   build: {
+    outDir: "dist-stable",
     target: "chrome105",
     minify: process.env.TAURI_DEBUG ? false : "esbuild",
     sourcemap: !!process.env.TAURI_DEBUG,
+    emptyOutDir: false,
+    rollupOptions: {
+      output: {
+        entryFileNames: "assets/app.js",
+        chunkFileNames: "assets/[name].js",
+        assetFileNames: (assetInfo) =>
+          assetInfo.name?.endsWith(".css")
+            ? "assets/app.css"
+            : "assets/[name][extname]",
+      },
+    },
   },
 });
