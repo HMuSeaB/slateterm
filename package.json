@@ -1,7 +1,7 @@
 {
   "name": "slateterm",
   "private": true,
-  "version": "0.1.2",
+  "version": "1.0.0",
   "packageManager": "pnpm@10.24.0",
   "engines": {
     "node": ">=20",

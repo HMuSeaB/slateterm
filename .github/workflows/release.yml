@@ -1,0 +1,66 @@
+name: Build Windows release
+
+on:
+  workflow_dispatch:
+    inputs:
+      tag:
+        description: Release tag to build
+        required: true
+        default: v1.0.0
+  push:
+    tags:
+      - "v*"
+
+permissions:
+  contents: read
+
+jobs:
+  build-windows:
+    runs-on: windows-latest
+    timeout-minutes: 45
+
+    steps:
+      - name: Check out source
+        uses: actions/checkout@v4
+
+      - name: Set up pnpm
+        uses: pnpm/action-setup@v4
+        with:
+          version: 10.24.0
+          run_install: false
+
+      - name: Set up Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: pnpm
+
+      - name: Set up Rust
+        uses: dtolnay/rust-toolchain@stable
+
+      - name: Cache Rust build
+        uses: Swatinem/rust-cache@v2
+        with:
+          workspaces: src-tauri
+
+      - name: Install frontend dependencies
+        run: pnpm install --frozen-lockfile
+
+      - name: Build SlateTerm
+        run: pnpm build:desktop
+
+      - name: Stage standalone executable
+        shell: pwsh
+        run: |
+          New-Item -ItemType Directory -Force -Path release-artifacts | Out-Null
+          Copy-Item src-tauri/target/release/slateterm.exe release-artifacts/SlateTerm-v1.0.0-windows-x64.exe
+          $hash = (Get-FileHash release-artifacts/SlateTerm-v1.0.0-windows-x64.exe -Algorithm SHA256).Hash.ToLowerInvariant()
+          "$hash  SlateTerm-v1.0.0-windows-x64.exe" | Set-Content release-artifacts/SHA256SUMS.txt
+
+      - name: Upload release artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: SlateTerm-v1.0.0-windows-x64
+          path: release-artifacts/*
+          if-no-files-found: error
+          retention-days: 14

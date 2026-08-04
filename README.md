@@ -44,7 +44,7 @@ Highlights:
 - Open terminal URLs with Ctrl+click in the default browser
 - Use smart `Ctrl+V` while Claude Code is running: SlateTerm detects Claude even when it was started manually from a shell, pastes text normally, and routes images through Claude's Windows `Alt+V` action
 - Pick an image from Windows clipboard history to attach it directly while Claude Code is running
-- Drag one PNG, JPG, JPEG, WebP, GIF, or BMP image into a pane running Claude Code to create an image attachment; non-PNG/BMP files are safely converted before attachment and other dropped files remain terminal paths
+- Drag files or folders into a Claude Code pane to queue path attachment chips for the next prompt; ordinary shell panes receive safely quoted absolute paths directly
 - Use `Ctrl+Shift+V` or `Shift+Insert` to explicitly paste clipboard text or an image file path in ordinary shells
 - Open workspace-aware shell or Claude Code tabs with the selected folder as their verified working directory
 - Save and restore named workspaces
@@ -107,8 +107,12 @@ pnpm tauri build
 
 - pnpm is the required JavaScript package manager; `pnpm-lock.yaml` is the only dependency lock file.
 - The repo ignores local build output such as `node_modules`, `dist`, and `src-tauri/target`.
-- Current app version is `0.1.2`.
+- Current app version is `1.0.0`.
 - Startup remains optimized around opening a local shell quickly, while AI runtimes are treated as visible, workspace-aware terminal sessions.
+
+## License
+
+SlateTerm is released under the [MIT License](LICENSE).
 
 ## Near-Term Direction
 

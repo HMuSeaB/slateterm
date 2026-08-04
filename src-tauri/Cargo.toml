@@ -1,8 +1,10 @@
 [package]
 name = "slateterm"
-version = "0.1.2"
-description = "Windows local terminal shell"
-authors = ["Codex"]
+version = "1.0.0"
+description = "Local-first Windows terminal workspace"
+authors = ["HMuSeaB"]
+license = "MIT"
+repository = "https://github.com/HMuSeaB/slateterm"
 edition = "2021"
 
 [build-dependencies]

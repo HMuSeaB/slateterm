@@ -7,5 +7,14 @@ src-tauri/target/
 .antigravity_docs/
 .vscode/
 *.log
+.env
+.env.*
+!.env.example
+*.pem
+*.key
+*.pfx
+*.p12
+*.jks
+*.keystore
 Thumbs.db
 .DS_Store

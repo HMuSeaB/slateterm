@@ -2,6 +2,15 @@
 
 ## Unreleased
 
+## v1.0.0 - 2026-08-04
+
+- Add Claude path attachment chips that collect dropped files and folders for the next prompt while ordinary shells continue to receive quoted paths directly.
+- Add persistent terminal tab reordering with Windows-friendly pointer capture, clear insertion feedback, and saved workspace ordering.
+- Refine the workspace file tree with SVG file-type icons, animated directory chevrons, hierarchy guides, keyboard-only focus rings, cached empty folders, and retryable loading states.
+- Keep reliable Shell and Claude profile restoration, pane-aware native file drops, clipboard image attachments, command history, command palette, PowerShell command blocks, and named workspaces from the 0.1 series.
+- Publish SlateTerm under the MIT License and add a reproducible GitHub Actions Windows release workflow.
+- Remove personal workstation identifiers from repository history and use a GitHub noreply identity for published commits and tags.
+
 ## v0.1.2 - 2026-08-03
 
 - Add folder-first workspaces, named workspace restore, verified session CWD creation, command palette/history, PowerShell command blocks, and responsive split-pane controls.
