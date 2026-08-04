@@ -73,11 +73,40 @@ type PathCompletion = {
   entries: FileEntry[];
 };
 
+type PendingPathAttachment = {
+  id: string;
+  path: string;
+  name: string;
+  badge: string;
+};
+
 const CLAUDE_IMAGE_ATTACH_SEQUENCE = "\x1bv";
 const MAX_COMMAND_BLOCK_OUTPUT = 1_000_000;
 
 function formatTerminalPaths(paths: string[]) {
   return paths.map((path) => (path.includes(" ") ? `"${path}"` : path)).join(" ");
+}
+
+function pathBaseName(path: string) {
+  return path.split(/[\\/]/).filter(Boolean).pop() || path;
+}
+
+function pathBadge(path: string) {
+  const name = pathBaseName(path);
+  const extension = name.includes(".") ? name.split(".").pop()?.toUpperCase() : undefined;
+  if (!extension || extension.length > 4) {
+    return "DIR";
+  }
+  return extension;
+}
+
+function createPathAttachment(path: string): PendingPathAttachment {
+  return {
+    id: `${path.toLowerCase()}-${crypto.randomUUID()}`,
+    path,
+    name: pathBaseName(path),
+    badge: pathBadge(path),
+  };
 }
 
 function isClaudeCommand(command: string) {
@@ -226,6 +255,7 @@ export default function TerminalPane({
   const [suggestion, setSuggestion] = useState<SuggestionResult | null>(null);
   const [pathCompletion, setPathCompletion] = useState<PathCompletion | null>(null);
   const [pathCompletionIndex, setPathCompletionIndex] = useState(0);
+  const [pendingPathAttachments, setPendingPathAttachments] = useState<PendingPathAttachment[]>([]);
   const [isDragging, setIsDragging] = useState(false);
   const [runtimeMode, setRuntimeMode] = useState<PaneRuntimeMode>(persistedRuntimeMode);
   const suggestionRef = useRef<SuggestionResult | null>(null);
@@ -233,6 +263,7 @@ export default function TerminalPane({
   const pathCompletionIndexRef = useRef(0);
   const pathCompletionRequestRef = useRef(0);
   const inputBufferRef = useRef("");
+  const pendingPathAttachmentsRef = useRef<PendingPathAttachment[]>([]);
   const cwdRef = useRef(cwd);
   const activeRef = useRef(active);
   const pointerInsideRef = useRef(false);
@@ -320,6 +351,39 @@ export default function TerminalPane({
     bindingRef.current?.terminal.focus();
   }
 
+  function updatePendingPathAttachments(nextAttachments: PendingPathAttachment[]) {
+    pendingPathAttachmentsRef.current = nextAttachments;
+    setPendingPathAttachments(nextAttachments);
+  }
+
+  function queueClaudePathAttachments(paths: string[]) {
+    const current = pendingPathAttachmentsRef.current;
+    const existingPaths = new Set(current.map((attachment) => attachment.path.toLowerCase()));
+    const additions = paths
+      .filter((path) => !existingPaths.has(path.toLowerCase()))
+      .map(createPathAttachment);
+    if (additions.length === 0) {
+      setSessionStatus({ tone: "info", message: "Those paths are already attached." });
+      return;
+    }
+    updatePendingPathAttachments([...current, ...additions]);
+    setSessionStatus({
+      tone: "info",
+      message: `${additions.length} path${additions.length === 1 ? "" : "s"} attached. Press Enter to send to Claude.`,
+    });
+  }
+
+  function removePendingPathAttachment(id: string) {
+    updatePendingPathAttachments(
+      pendingPathAttachmentsRef.current.filter((attachment) => attachment.id !== id),
+    );
+    focusTerminal();
+  }
+
+  function clearPendingPathAttachments() {
+    updatePendingPathAttachments([]);
+  }
+
   function copyBlockText(text: string, label: string) {
     if (!text) {
       return;
@@ -395,6 +459,12 @@ export default function TerminalPane({
 
   async function handleDroppedPaths(paths: string[]) {
     if (paths.length === 0) {
+      return;
+    }
+
+    if (isClaudeRuntime()) {
+      queueClaudePathAttachments(paths);
+      focusTerminal();
       return;
     }
 
@@ -584,6 +654,29 @@ export default function TerminalPane({
 
     const dataDispose = terminal.onData((data) => {
       clearTransientStatus();
+
+      if ((data === "\r" || data === "\n") && isClaudeRuntime() && pendingPathAttachmentsRef.current.length > 0) {
+        const attachmentText = formatTerminalPaths(
+          pendingPathAttachmentsRef.current.map((attachment) => attachment.path),
+        );
+        const separator = inputBufferRef.current.trim() ? " " : "";
+        const combinedInput = `${inputBufferRef.current}${separator}${attachmentText}`;
+        recordCommand(combinedInput);
+        void writeInput(sessionId, `${separator}${attachmentText}\r`);
+        clearPendingPathAttachments();
+        updateBuffer("");
+        return;
+      }
+
+      if (
+        (data === "\x7f" || data === "\x08")
+        && !inputBufferRef.current
+        && pendingPathAttachmentsRef.current.length > 0
+      ) {
+        updatePendingPathAttachments(pendingPathAttachmentsRef.current.slice(0, -1));
+        return;
+      }
+
       void writeInput(sessionId, data);
 
       if (data === "\r" || data === "\n") {
@@ -594,6 +687,7 @@ export default function TerminalPane({
       } else if (data === "\x7f" || data === "\x08") {
         updateBuffer(inputBufferRef.current.slice(0, -1));
       } else if (data === "\x03" || data === "\x15") {
+        clearPendingPathAttachments();
         updateBuffer("");
       } else if (!data.startsWith("\x1b")) {
         const printable = data.replace(/[\x00-\x1F\x7F-\x9F]/g, "");
@@ -1020,12 +1114,16 @@ export default function TerminalPane({
       </header>
 
       <div className={`terminal-pane-body ${blocksOpen && commandBlocks.length > 0 ? "has-blocks-drawer" : ""}`}>
-        <div className="terminal-surface">
+        <div className={`terminal-surface ${pendingPathAttachments.length > 0 ? "has-path-attachments" : ""}`}>
         {isDragging && (
           <div className="drag-drop-overlay">
             <div className="drop-badge">
-              <strong>DROP FILE PATH INTO TERMINAL</strong>
-              <span>Files and folders are inserted as absolute paths</span>
+              <strong>{runtimeMode === "claude" || profileCategory === "ai" ? "ATTACH TO CLAUDE" : "DROP FILE PATH INTO TERMINAL"}</strong>
+              <span>
+                {runtimeMode === "claude" || profileCategory === "ai"
+                  ? "Files and folders become removable path attachments"
+                  : "Files and folders are inserted as absolute paths"}
+              </span>
             </div>
           </div>
         )}
@@ -1113,6 +1211,34 @@ export default function TerminalPane({
         )}
 
           <div ref={containerRef} className="terminal-host" />
+
+          {pendingPathAttachments.length > 0 && (
+            <div className="claude-path-attachments" aria-label="Paths attached to the next Claude message">
+              <div className="claude-path-attachment-list">
+                {pendingPathAttachments.map((attachment) => (
+                  <div key={attachment.id} className="claude-path-attachment" title={attachment.path}>
+                    <span className="claude-path-attachment-icon" aria-hidden="true">{attachment.badge}</span>
+                    <span className="claude-path-attachment-copy">
+                      <strong>{attachment.name}</strong>
+                      <small>{attachment.path}</small>
+                    </span>
+                    <button
+                      type="button"
+                      aria-label={`Remove ${attachment.name}`}
+                      onMouseDown={(event) => event.preventDefault()}
+                      onClick={() => removePendingPathAttachment(attachment.id)}
+                    >
+                      ×
+                    </button>
+                  </div>
+                ))}
+              </div>
+              <div className="claude-path-attachment-hint">
+                <span>{pendingPathAttachments.length} attached</span>
+                <span>Enter sends with your prompt · Ctrl+C clears</span>
+              </div>
+            </div>
+          )}
         </div>
 
         {blocksOpen && commandBlocks.length > 0 && (

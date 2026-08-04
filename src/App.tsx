@@ -640,6 +640,27 @@ export default function App() {
     );
   }
 
+  function reorderTabs(draggedTabId: string, targetTabId: string, placement: "before" | "after") {
+    if (draggedTabId === targetTabId) {
+      return;
+    }
+
+    setTabs((current) => {
+      const draggedIndex = current.findIndex((tab) => tab.id === draggedTabId);
+      const targetIndex = current.findIndex((tab) => tab.id === targetTabId);
+      if (draggedIndex < 0 || targetIndex < 0) {
+        return current;
+      }
+
+      const reordered = [...current];
+      const [draggedTab] = reordered.splice(draggedIndex, 1);
+      const adjustedTargetIndex = reordered.findIndex((tab) => tab.id === targetTabId);
+      const insertionIndex = placement === "after" ? adjustedTargetIndex + 1 : adjustedTargetIndex;
+      reordered.splice(insertionIndex, 0, draggedTab);
+      return reordered;
+    });
+  }
+
   async function closeTab(tabId: string, closeSessions = true) {
     const targetTab = tabs.find((tab) => tab.id === tabId);
     if (!targetTab) {
@@ -861,6 +882,7 @@ export default function App() {
               activeTabId={activeTabId}
               onSelect={setActiveTabId}
               onClose={(tabId) => void closeTab(tabId)}
+              onReorder={reorderTabs}
             />
 
             <section className="workspace-frame">
