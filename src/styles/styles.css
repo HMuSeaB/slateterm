@@ -693,6 +693,7 @@ button {
 }
 
 .tabbar {
+  position: relative;
   display: flex;
   align-items: center;
   gap: 3px;
@@ -701,7 +702,15 @@ button {
   border-bottom: 1px solid rgba(255, 255, 255, 0.045);
   overflow-x: auto;
   overflow-y: hidden;
+  scroll-behavior: auto;
   scrollbar-width: none;
+}
+
+.tabbar.is-reordering {
+  cursor: grabbing;
+  background:
+    linear-gradient(90deg, rgba(84, 181, 176, 0.08), transparent 62px),
+    linear-gradient(270deg, rgba(84, 181, 176, 0.08), transparent 62px);
 }
 
 .tabbar::-webkit-scrollbar {
@@ -734,9 +743,66 @@ button {
 
 .tab-pill.is-dragging {
   z-index: 2;
-  opacity: 0.42;
-  transform: translateY(2px) scale(0.985);
+  opacity: 0.24;
+  transform: translateY(3px) scale(0.97);
+  filter: saturate(0.68);
   box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.05);
+}
+
+.tab-drag-preview {
+  position: fixed;
+  z-index: 240;
+  display: grid;
+  grid-template-columns: auto minmax(0, 1fr) auto;
+  align-items: center;
+  gap: 8px;
+  width: min(230px, calc(100vw - 24px));
+  min-height: 38px;
+  padding: 7px 11px;
+  border: 1px solid rgba(109, 219, 212, 0.34);
+  border-radius: 11px;
+  color: #eef7f6;
+  pointer-events: none;
+  background:
+    linear-gradient(180deg, rgba(32, 47, 56, 0.97), rgba(13, 21, 28, 0.96));
+  box-shadow:
+    0 16px 38px rgba(0, 0, 0, 0.42),
+    0 0 0 1px rgba(109, 219, 212, 0.08),
+    inset 0 1px 0 rgba(255, 255, 255, 0.1);
+  transform: rotate(0.7deg) translateY(-2px);
+  backdrop-filter: blur(18px);
+}
+
+.tab-drag-preview.is-claude {
+  border-color: rgba(245, 158, 11, 0.34);
+  box-shadow:
+    0 16px 38px rgba(0, 0, 0, 0.42),
+    0 0 0 1px rgba(245, 158, 11, 0.08),
+    inset 0 1px 0 rgba(255, 255, 255, 0.1);
+}
+
+.tab-drag-preview strong {
+  overflow: hidden;
+  font-size: 11px;
+  font-weight: 650;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.tab-drag-preview small {
+  color: #8fa0a8;
+  font-size: 9px;
+  text-transform: uppercase;
+}
+
+.theme-paper .tab-drag-preview {
+  color: #272219;
+  border-color: rgba(38, 143, 137, 0.28);
+  background: linear-gradient(180deg, rgba(255, 252, 246, 0.98), rgba(231, 222, 206, 0.96));
+  box-shadow:
+    0 16px 36px rgba(74, 61, 41, 0.2),
+    0 0 0 1px rgba(38, 143, 137, 0.08),
+    inset 0 1px 0 rgba(255, 255, 255, 0.82);
 }
 
 .tab-pill.is-drop-before::before,
@@ -868,6 +934,97 @@ button {
   color: #ffaaa2;
   opacity: 1;
   background: rgba(239, 107, 97, 0.09);
+}
+
+.tab-context-menu {
+  position: fixed;
+  z-index: 260;
+  display: grid;
+  gap: 3px;
+  width: 246px;
+  padding: 8px;
+  border: 1px solid rgba(255, 255, 255, 0.1);
+  border-radius: 14px;
+  color: #d9e3e6;
+  background:
+    radial-gradient(circle at 18% 0%, rgba(84, 181, 176, 0.08), transparent 38%),
+    linear-gradient(180deg, rgba(24, 33, 42, 0.98), rgba(8, 13, 18, 0.97));
+  box-shadow: var(--shadow-float);
+  backdrop-filter: blur(18px);
+}
+
+.tab-context-menu button {
+  display: grid;
+  grid-template-columns: 28px minmax(0, 1fr);
+  align-items: center;
+  gap: 8px;
+  width: 100%;
+  padding: 9px 10px;
+  border: 0;
+  border-radius: 10px;
+  color: inherit;
+  text-align: left;
+  background: transparent;
+}
+
+.tab-context-menu button:hover:not(:disabled) {
+  background: rgba(84, 181, 176, 0.1);
+  box-shadow: var(--shadow-inset);
+}
+
+.tab-context-menu button:disabled {
+  cursor: not-allowed;
+  opacity: 0.36;
+}
+
+.tab-context-menu button > span {
+  color: #72c6c0;
+  font: 600 15px/1 "Cascadia Mono", Consolas, monospace;
+  text-align: center;
+}
+
+.tab-context-menu button div {
+  display: grid;
+  gap: 2px;
+  min-width: 0;
+}
+
+.tab-context-menu button strong {
+  font-size: 11px;
+}
+
+.tab-context-menu button small,
+.tab-context-menu-hint {
+  color: #74838b;
+  font-size: 9px;
+}
+
+.tab-context-menu-hint {
+  padding: 7px 9px 3px 46px;
+  border-top: 1px solid rgba(255, 255, 255, 0.06);
+}
+
+.theme-paper .tab-context-menu {
+  color: #332d24;
+  border-color: rgba(63, 54, 42, 0.12);
+  background: linear-gradient(180deg, rgba(255, 251, 243, 0.98), rgba(231, 222, 206, 0.96));
+}
+
+.theme-paper .tab-context-menu button:hover:not(:disabled) {
+  background: rgba(38, 143, 137, 0.09);
+}
+
+.theme-paper .tab-context-menu button > span {
+  color: #268f89;
+}
+
+.theme-paper .tab-context-menu button small,
+.theme-paper .tab-context-menu-hint {
+  color: #7b7263;
+}
+
+.theme-paper .tab-context-menu-hint {
+  border-top-color: rgba(63, 54, 42, 0.1);
 }
 
 .workspace-frame {

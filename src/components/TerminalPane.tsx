@@ -13,6 +13,7 @@ import {
   openExternalUrl,
   readClipboardImage,
   readClipboardText,
+  readImageFile,
   resizeSession,
   saveTempImage,
   writeClipboardImageFile,
@@ -107,6 +108,47 @@ function createPathAttachment(path: string): PendingPathAttachment {
     name: pathBaseName(path),
     badge: pathBadge(path),
   };
+}
+
+function detectedImageExtension(bytes: Uint8Array) {
+  if (
+    bytes.length >= 8
+    && bytes[0] === 0x89
+    && bytes[1] === 0x50
+    && bytes[2] === 0x4e
+    && bytes[3] === 0x47
+    && bytes[4] === 0x0d
+    && bytes[5] === 0x0a
+    && bytes[6] === 0x1a
+    && bytes[7] === 0x0a
+  ) {
+    return "png";
+  }
+  if (bytes.length >= 3 && bytes[0] === 0xff && bytes[1] === 0xd8 && bytes[2] === 0xff) {
+    return "jpeg";
+  }
+  if (bytes.length >= 6) {
+    const header = String.fromCharCode(...bytes.slice(0, 6));
+    if (header === "GIF87a" || header === "GIF89a") {
+      return "gif";
+    }
+  }
+  if (bytes.length >= 12) {
+    const riff = String.fromCharCode(...bytes.slice(0, 4));
+    const webp = String.fromCharCode(...bytes.slice(8, 12));
+    if (riff === "RIFF" && webp === "WEBP") {
+      return "webp";
+    }
+  }
+  if (bytes.length >= 2 && bytes[0] === 0x42 && bytes[1] === 0x4d) {
+    return "bmp";
+  }
+  return null;
+}
+
+function imageMimeType(extension: string) {
+  if (extension === "jpeg") return "image/jpeg";
+  return `image/${extension}`;
 }
 
 function isClaudeCommand(command: string) {
@@ -455,6 +497,31 @@ export default function TerminalPane({
   async function attachClipboardImageToClaude(message = "Attaching image to Claude Code...") {
     setSessionStatus({ tone: "info", message });
     await writeInput(sessionId, CLAUDE_IMAGE_ATTACH_SEQUENCE);
+    await new Promise((resolve) => window.setTimeout(resolve, 160));
+  }
+
+  async function prepareDroppedImage(path: string) {
+    let bytes: Uint8Array;
+    try {
+      bytes = await readImageFile(path);
+    } catch {
+      return false;
+    }
+    const extension = detectedImageExtension(bytes);
+    if (!extension) {
+      return false;
+    }
+    try {
+      const sourceBytes = new Uint8Array(bytes.byteLength);
+      sourceBytes.set(bytes);
+      const sourceBlob = new Blob([sourceBytes.buffer], { type: imageMimeType(extension) });
+      const pngBytes = await imageBlobToPngBytes(sourceBlob);
+      const imagePath = await saveTempImage(pngBytes, "png");
+      await writeClipboardImageFile(imagePath);
+      return true;
+    } catch (error) {
+      throw new Error(`Could not decode ${pathBaseName(path)} as an image: ${String(error)}`);
+    }
   }
 
   async function handleDroppedPaths(paths: string[]) {
@@ -463,7 +530,24 @@ export default function TerminalPane({
     }
 
     if (isClaudeRuntime()) {
-      queueClaudePathAttachments(paths);
+      const regularPaths: string[] = [];
+      for (const path of paths) {
+        let attachedAsImage = false;
+        try {
+          attachedAsImage = await prepareDroppedImage(path);
+        } catch (error) {
+          setSessionStatus({ tone: "error", message: `Image attachment failed: ${String(error)}` });
+          continue;
+        }
+        if (attachedAsImage) {
+          await attachClipboardImageToClaude(`Attaching ${pathBaseName(path)} to Claude Code...`);
+          continue;
+        }
+        regularPaths.push(path);
+      }
+      if (regularPaths.length > 0) {
+        queueClaudePathAttachments(regularPaths);
+      }
       focusTerminal();
       return;
     }
@@ -1121,7 +1205,7 @@ export default function TerminalPane({
               <strong>{runtimeMode === "claude" || profileCategory === "ai" ? "ATTACH TO CLAUDE" : "DROP FILE PATH INTO TERMINAL"}</strong>
               <span>
                 {runtimeMode === "claude" || profileCategory === "ai"
-                  ? "Files and folders become removable path attachments"
+                  ? "Images attach as image chips; other files and folders stay as paths"
                   : "Files and folders are inserted as absolute paths"}
               </span>
             </div>
