@@ -34,12 +34,17 @@ export default function SettingsPanel({
   }
 
   const shellProfiles = profiles.filter((profile) => profile.category === "shell");
+  const proxy = settings.proxy ?? { enabled: false, host: "127.0.0.1", port: 7890 };
 
   const update = <K extends keyof Settings>(key: K, value: Settings[K]) => {
     onChange({
       ...settings,
       [key]: value,
     });
+  };
+
+  const updateProxy = (nextProxy: typeof proxy) => {
+    onChange({ ...settings, proxy: nextProxy });
   };
 
   return (
@@ -129,6 +134,41 @@ export default function SettingsPanel({
           />
           <span>Remember current layout preference for the next launch</span>
         </label>
+
+        <div className="settings-proxy-section">
+          <div className="settings-proxy-heading">
+            <strong>Network proxy</strong>
+            <span>New terminal sessions only — already-open sessions keep their environment.</span>
+          </div>
+          <label className="toggle-row">
+            <input
+              type="checkbox"
+              checked={proxy.enabled}
+              onChange={(e) => updateProxy({ ...proxy, enabled: e.target.checked })}
+            />
+            <span>Route new sessions through the local proxy (HTTP_PROXY / HTTPS_PROXY / ALL_PROXY)</span>
+          </label>
+          <div className="settings-grid">
+            <label>
+              <span>Proxy host</span>
+              <input
+                value={proxy.host}
+                placeholder="127.0.0.1"
+                onChange={(e) => updateProxy({ ...proxy, host: e.target.value })}
+              />
+            </label>
+            <label>
+              <span>Proxy port</span>
+              <input
+                type="number"
+                min={1}
+                max={65535}
+                value={proxy.port}
+                onChange={(e) => updateProxy({ ...proxy, port: Number(e.target.value) })}
+              />
+            </label>
+          </div>
+        </div>
       </aside>
     </div>
   );

@@ -4,6 +4,7 @@ import type {
   FileEntry,
   FilePreview,
   Profile,
+  ProxySettings,
   Settings,
 } from "./types";
 
@@ -35,8 +36,20 @@ export async function readTextFile(path: string) {
   return invoke<FilePreview>("read_text_file", { path });
 }
 
-export async function createSession(profileId: string, cols: number, rows: number, cwd?: string | null) {
-  return invoke<CreateSessionResponse>("create_session", { profileId, cols, rows, cwd: cwd || null });
+export async function createSession(
+  profileId: string,
+  cols: number,
+  rows: number,
+  cwd?: string | null,
+  proxy?: ProxySettings | null,
+) {
+  return invoke<CreateSessionResponse>("create_session", {
+    profileId,
+    cols,
+    rows,
+    cwd: cwd || null,
+    proxy: proxy || null,
+  });
 }
 
 export async function writeInput(sessionId: string, data: string) {

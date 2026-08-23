@@ -326,6 +326,18 @@ button {
   background: rgba(84, 181, 176, 0.12);
 }
 
+.icon-button.proxy-toggle.is-on {
+  border-color: rgba(84, 181, 176, 0.45);
+  color: #7fe0d9;
+  background: rgba(84, 181, 176, 0.16);
+}
+
+.theme-paper .icon-button.proxy-toggle.is-on {
+  border-color: rgba(20, 95, 92, 0.42);
+  color: #145f5c;
+  background: rgba(20, 95, 92, 0.12);
+}
+
 .primary-button:active,
 .icon-button:active,
 .context-folder-button:active,
@@ -495,6 +507,33 @@ button {
 
 .context-status-dot.is-error {
   background: #ef6b61;
+}
+
+.context-workspace-button {
+  display: inline-flex;
+  align-items: center;
+  gap: 7px;
+  min-width: 0;
+  max-width: 280px;
+  padding: 4px 9px;
+  border: 1px solid transparent;
+  border-radius: 8px;
+  background: transparent;
+  transition: background 140ms ease, border-color 140ms ease;
+}
+
+.context-workspace-button:hover {
+  border-color: rgba(255, 255, 255, 0.09);
+  background: rgba(255, 255, 255, 0.045);
+}
+
+.theme-paper .context-workspace-button:hover {
+  border-color: rgba(63, 54, 42, 0.14);
+  background: rgba(63, 54, 42, 0.05);
+}
+
+.context-workspace-caret {
+  flex: 0 0 auto;
 }
 
 .runtime-context-badge {
@@ -1024,6 +1063,119 @@ button {
 }
 
 .theme-paper .tab-context-menu-hint {
+  border-top-color: rgba(63, 54, 42, 0.1);
+}
+
+.workspace-switcher {
+  position: fixed;
+  z-index: 260;
+  display: grid;
+  gap: 3px;
+  width: 272px;
+  padding: 8px;
+  border: 1px solid rgba(255, 255, 255, 0.1);
+  border-radius: 14px;
+  color: #d9e3e6;
+  background:
+    radial-gradient(circle at 18% 0%, rgba(84, 181, 176, 0.08), transparent 38%),
+    linear-gradient(180deg, rgba(24, 33, 42, 0.98), rgba(8, 13, 18, 0.97));
+  box-shadow: var(--shadow-float);
+  backdrop-filter: blur(18px);
+}
+
+.workspace-switcher-heading {
+  padding: 2px 10px 6px;
+  color: #74838b;
+  font-size: 9px;
+  font-weight: 700;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+}
+
+.workspace-switcher-empty {
+  padding: 8px 10px;
+  color: #74838b;
+  font-size: 10px;
+}
+
+.workspace-switcher button {
+  display: grid;
+  grid-template-columns: 28px minmax(0, 1fr);
+  align-items: center;
+  gap: 8px;
+  width: 100%;
+  padding: 9px 10px;
+  border: 0;
+  border-radius: 10px;
+  color: inherit;
+  text-align: left;
+  background: transparent;
+}
+
+.workspace-switcher button:hover,
+.workspace-switcher button.is-active {
+  background: rgba(84, 181, 176, 0.1);
+  box-shadow: var(--shadow-inset);
+}
+
+.workspace-switcher button > span {
+  color: #72c6c0;
+  font: 600 13px/1 "Cascadia Mono", Consolas, monospace;
+  text-align: center;
+}
+
+.workspace-switcher button div {
+  display: grid;
+  gap: 2px;
+  min-width: 0;
+}
+
+.workspace-switcher button strong,
+.workspace-switcher button small {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.workspace-switcher button strong {
+  font-size: 11px;
+}
+
+.workspace-switcher button small {
+  color: #74838b;
+  font-size: 9px;
+}
+
+.workspace-switcher-hint {
+  margin-top: 3px;
+  padding: 7px 10px 3px;
+  border-top: 1px solid rgba(255, 255, 255, 0.06);
+  color: #74838b;
+  font-size: 9px;
+}
+
+.theme-paper .workspace-switcher {
+  color: #332d24;
+  border-color: rgba(63, 54, 42, 0.12);
+  background: linear-gradient(180deg, rgba(255, 251, 243, 0.98), rgba(231, 222, 206, 0.96));
+}
+
+.theme-paper .workspace-switcher button:hover,
+.theme-paper .workspace-switcher button.is-active {
+  background: rgba(38, 143, 137, 0.09);
+}
+
+.theme-paper .workspace-switcher button > span {
+  color: #268f89;
+}
+
+.theme-paper .workspace-switcher button small,
+.theme-paper .workspace-switcher-heading,
+.theme-paper .workspace-switcher-hint {
+  color: #7b7263;
+}
+
+.theme-paper .workspace-switcher-hint {
   border-top-color: rgba(63, 54, 42, 0.1);
 }
 
@@ -1763,78 +1915,6 @@ button {
   font-size: 12px;
 }
 
-.autosuggest-hint {
-  position: absolute;
-  bottom: 14px;
-  right: 14px;
-  z-index: 10;
-  display: flex;
-  align-items: center;
-  gap: 8px;
-  padding: 6px 12px;
-  border: 1px solid rgba(245, 158, 11, 0.28);
-  border-radius: 10px;
-  background: rgba(17, 20, 26, 0.88);
-  backdrop-filter: blur(8px);
-  box-shadow: 0 8px 24px rgba(0, 0, 0, 0.35);
-  font-family: "JetBrainsMono Nerd Font", "Cascadia Mono", Consolas, monospace;
-  font-size: 12px;
-  pointer-events: none;
-  animation: fadeIn 0.15s ease-out;
-}
-
-.theme-paper .autosuggest-hint {
-  background: rgba(247, 243, 232, 0.92);
-  border-color: rgba(20, 95, 92, 0.3);
-  box-shadow: 0 8px 24px rgba(0, 0, 0, 0.1);
-}
-
-.autosuggest-hint .hint-label {
-  font-size: 10px;
-  font-weight: 700;
-  letter-spacing: 0.06em;
-  padding: 2px 5px;
-  border-radius: 4px;
-  background: rgba(245, 158, 11, 0.2);
-  color: #f59e0b;
-}
-
-.theme-paper .autosuggest-hint .hint-label {
-  background: rgba(20, 95, 92, 0.18);
-  color: #145f5c;
-}
-
-.autosuggest-hint .hint-matched {
-  color: #e8e1cf;
-  font-weight: 600;
-}
-
-.theme-paper .autosuggest-hint .hint-matched {
-  color: #2f2b22;
-}
-
-.autosuggest-hint .hint-suffix {
-  color: #6e7682;
-  font-weight: 400;
-}
-
-.theme-paper .autosuggest-hint .hint-suffix {
-  color: #6d6657;
-}
-
-.autosuggest-hint .hint-kbd {
-  font-size: 11px;
-  color: rgba(245, 158, 11, 0.85);
-  margin-left: 6px;
-  padding-left: 8px;
-  border-left: 1px solid rgba(255, 255, 255, 0.12);
-}
-
-.theme-paper .autosuggest-hint .hint-kbd {
-  color: #145f5c;
-  border-left-color: rgba(0, 0, 0, 0.12);
-}
-
 .path-completion-popover {
   position: absolute;
   z-index: 24;
@@ -2074,6 +2154,33 @@ button {
   grid-template-columns: auto 1fr;
   align-items: center;
   margin-top: 16px;
+}
+
+.settings-proxy-section {
+  display: grid;
+  gap: 4px;
+  margin-top: 18px;
+  padding-top: 16px;
+  border-top: 1px solid rgba(255, 255, 255, 0.06);
+}
+
+.theme-paper .settings-proxy-section {
+  border-top-color: rgba(63, 54, 42, 0.12);
+}
+
+.settings-proxy-heading {
+  display: grid;
+  gap: 3px;
+  margin-bottom: 6px;
+}
+
+.settings-proxy-heading strong {
+  font-size: 12px;
+}
+
+.settings-proxy-heading span {
+  color: #74838b;
+  font-size: 10px;
 }
 
 .boot-screen,

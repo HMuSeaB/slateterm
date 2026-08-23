@@ -7,6 +7,7 @@ import TabBar from "./components/TabBar";
 import TerminalPane from "./components/TerminalPane";
 import TitleBar from "./components/TitleBar";
 import WorkspacePanel from "./components/WorkspacePanel";
+import WorkspaceSwitcher from "./components/WorkspaceSwitcher";
 import {
   closeSession,
   createSession,
@@ -16,7 +17,16 @@ import {
   saveSettings,
   selectWorkspaceFolder,
 } from "./lib/tauri";
-import type { FilePreview as FilePreviewData, Pane, Profile, Settings, StartupLayout, Tab, WorkspaceState } from "./lib/types";
+import type {
+  FilePreview as FilePreviewData,
+  Pane,
+  Profile,
+  ProxySettings,
+  Settings,
+  StartupLayout,
+  Tab,
+  WorkspaceState,
+} from "./lib/types";
 
 const DEFAULT_STARTUP_LAYOUT: StartupLayout = {
   paneCount: 1,
@@ -34,12 +44,29 @@ const DEFAULT_SETTINGS: Settings = {
   startupLayout: DEFAULT_STARTUP_LAYOUT,
   workspaceRoot: null,
   namedWorkspaces: [],
+  proxy: { enabled: false, host: "127.0.0.1", port: 7890 },
 };
 
 const PANE_SPLITTER_WIDTH = 10;
 
 function makeId(prefix: string) {
   return `${prefix}-${crypto.randomUUID()}`;
+}
+
+function normalizeProxy(candidate: ProxySettings | null | undefined): ProxySettings {
+  if (!candidate || typeof candidate !== "object") {
+    return DEFAULT_SETTINGS.proxy!;
+  }
+  const port = Number(candidate.port);
+  return {
+    enabled: candidate.enabled === true,
+    host: (candidate.host || "127.0.0.1").trim(),
+    port: Number.isFinite(port) && port > 0 && port < 65536 ? Math.floor(port) : 7890,
+  };
+}
+
+function proxyTargetLabel(proxy: ProxySettings) {
+  return `${proxy.host}:${proxy.port}`;
 }
 
 function clampFontSize(value: number) {
@@ -82,6 +109,7 @@ function normalizeSettings(candidate: Settings): Settings {
     workspaceRoot: candidate.workspaceRoot || null,
     savedState: candidate.savedState || null,
     namedWorkspaces: Array.isArray(candidate.namedWorkspaces) ? candidate.namedWorkspaces : [],
+    proxy: normalizeProxy(candidate.proxy),
   };
 }
 
@@ -126,6 +154,8 @@ export default function App() {
   const [queuedCommand, setQueuedCommand] = useState<{ id: string; value: string; sessionId: string } | null>(null);
   const [booting, setBooting] = useState(true);
   const [bootError, setBootError] = useState<string | null>(null);
+  const [activeNamedWorkspaceId, setActiveNamedWorkspaceId] = useState<string | null>(null);
+  const [switcherAnchor, setSwitcherAnchor] = useState<{ x: number; y: number } | null>(null);
   const paneDeckRef = useRef<HTMLDivElement | null>(null);
   const dragStateRef = useRef<{ tabId: string } | null>(null);
 
@@ -240,7 +270,7 @@ export default function App() {
         for (const savedPane of savedTab.panes) {
           const paneProfileId = resolveProfileId(savedPane.profileId || resolvedProfileId, sourceProfiles);
           const paneCwd = savedPane.cwd || sourceSettings.lastCwd || null;
-          const session = await createSession(paneProfileId, 120, 32, paneCwd);
+          const session = await createSession(paneProfileId, 120, 32, paneCwd, normalizeProxy(sourceSettings.proxy));
           createdSessionIds.push(session.sessionId);
           restoredPanes.push({
             id: makeId("pane"),
@@ -316,28 +346,71 @@ export default function App() {
     if (!proposed) {
       return;
     }
+    const newId = makeId("workspace");
     setSettings((current) => ({
       ...current,
       namedWorkspaces: [
-        { id: makeId("workspace"), name: proposed, state, updatedAt: new Date().toISOString() },
+        { id: newId, name: proposed, state, updatedAt: new Date().toISOString() },
         ...(current.namedWorkspaces || []),
       ],
     }));
+    setActiveNamedWorkspaceId(newId);
   }
 
   async function loadNamedWorkspace(workspaceId: string) {
+    setSwitcherAnchor(null);
     const workspace = settings.namedWorkspaces?.find((item) => item.id === workspaceId);
-    if (!workspace) {
+    if (!workspace || workspaceId === activeNamedWorkspaceId) {
       return;
     }
-    const oldTabs = tabs;
+
+    const sourceTabs = tabs;
+    const leavingState = snapshotWorkspace();
     const restored = await restoreWorkspaceSnapshot(workspace.state);
     if (!restored) {
       setBootError(`Could not open workspace: ${workspace.name}`);
       return;
     }
-    await Promise.all(oldTabs.flatMap((tab) => tab.panes).map((pane) => closeSession(pane.sessionId).catch(() => undefined)));
+
+    // 离开前把当前布局写回源工作区，下次切回来时原样恢复
+    if (activeNamedWorkspaceId && leavingState) {
+      setSettings((current) => ({
+        ...current,
+        namedWorkspaces: (current.namedWorkspaces || []).map((item) =>
+          item.id === activeNamedWorkspaceId
+            ? { ...item, state: leavingState, updatedAt: new Date().toISOString() }
+            : item,
+        ),
+      }));
+    }
+
+    await Promise.all(
+      sourceTabs.flatMap((tab) => tab.panes).map((pane) => closeSession(pane.sessionId).catch(() => undefined)),
+    );
+    setActiveNamedWorkspaceId(workspaceId);
     setWorkspaceOpen(false);
+  }
+
+  function cycleNamedWorkspace(direction: 1 | -1) {
+    const workspaces = settings.namedWorkspaces || [];
+    if (workspaces.length === 0) {
+      return;
+    }
+    const currentIndex = workspaces.findIndex((item) => item.id === activeNamedWorkspaceId);
+    const nextIndex = currentIndex < 0
+      ? (direction === 1 ? 0 : workspaces.length - 1)
+      : (currentIndex + direction + workspaces.length) % workspaces.length;
+    if (nextIndex === currentIndex) {
+      return;
+    }
+    void loadNamedWorkspace(workspaces[nextIndex].id);
+  }
+
+  function toggleProxy() {
+    setSettings((current) => {
+      const proxy = normalizeProxy(current.proxy);
+      return { ...current, proxy: { ...proxy, enabled: !proxy.enabled } };
+    });
   }
 
   function deleteNamedWorkspace(workspaceId: string) {
@@ -345,6 +418,9 @@ export default function App() {
       ...current,
       namedWorkspaces: (current.namedWorkspaces || []).filter((item) => item.id !== workspaceId),
     }));
+    if (workspaceId === activeNamedWorkspaceId) {
+      setActiveNamedWorkspaceId(null);
+    }
   }
 
   useEffect(() => {
@@ -419,6 +495,16 @@ export default function App() {
         setWorkspaceOpen((current) => !current);
       }
 
+      if (event.ctrlKey && event.altKey && event.key.toLowerCase() === "p") {
+        event.preventDefault();
+        toggleProxy();
+      }
+
+      if (event.ctrlKey && event.altKey && (event.key === "ArrowLeft" || event.key === "ArrowRight")) {
+        event.preventDefault();
+        cycleNamedWorkspace(event.key === "ArrowRight" ? 1 : -1);
+      }
+
       if (event.ctrlKey && event.key === ",") {
         event.preventDefault();
         setSettingsOpen((current) => !current);
@@ -427,17 +513,18 @@ export default function App() {
 
     window.addEventListener("keydown", onKeyDown, true);
     return () => window.removeEventListener("keydown", onKeyDown, true);
-  }, [activeTabId, selectedProfileId]);
+  }, [activeTabId, selectedProfileId, settings.namedWorkspaces, activeNamedWorkspaceId, tabs, profiles]);
 
   async function createTab(
     profileId: string,
     sourceProfiles: Profile[],
     layout = DEFAULT_STARTUP_LAYOUT,
     initialCwd?: string | null,
+    proxy?: ProxySettings | null,
   ) {
     const resolvedProfileId = resolveProfileId(profileId, sourceProfiles);
     const profileName = profileLabel(resolvedProfileId, sourceProfiles);
-    const primarySession = await createSession(resolvedProfileId, 120, 32, initialCwd);
+    const primarySession = await createSession(resolvedProfileId, 120, 32, initialCwd, proxy);
     const initialRuntimeMode = sourceProfiles.find((profile) => profile.id === resolvedProfileId)?.category === "ai" ? "claude" : "shell";
     const primaryPane: Pane = {
       id: makeId("pane"),
@@ -463,7 +550,7 @@ export default function App() {
       };
     }
 
-    const secondarySession = await createSession(resolvedProfileId, 120, 32, initialCwd);
+    const secondarySession = await createSession(resolvedProfileId, 120, 32, initialCwd, proxy);
     const splitRatio = normalizeSplitRatio(layout.splitRatio);
     const secondaryPane: Pane = {
       id: makeId("pane"),
@@ -497,6 +584,7 @@ export default function App() {
       sourceProfiles,
       startupLayout,
       startupSettings.lastCwd,
+      normalizeProxy(startupSettings.proxy),
     );
 
     setTabs([nextTab]);
@@ -509,7 +597,7 @@ export default function App() {
     try {
       const activePane = activeTab?.panes.find((pane) => pane.id === activeTab.activePaneId);
       const targetCwd = explicitCwd ?? settings.workspaceRoot ?? activePane?.cwd ?? settings.lastCwd ?? null;
-      const { resolvedProfileId, nextTab } = await createTab(profileId, sourceProfiles, DEFAULT_STARTUP_LAYOUT, targetCwd);
+      const { resolvedProfileId, nextTab } = await createTab(profileId, sourceProfiles, DEFAULT_STARTUP_LAYOUT, targetCwd, normalizeProxy(settings.proxy));
 
       setTabs((current) => [...current, nextTab]);
       setActiveTabId(nextTab.id);
@@ -572,7 +660,7 @@ export default function App() {
     try {
       const activePane = activeTab.panes.find((pane) => pane.id === activeTab.activePaneId);
       const targetCwd = activePane?.cwd || settings.lastCwd || null;
-      const result = await createSession(activeTab.profileId, 120, 32, targetCwd);
+      const result = await createSession(activeTab.profileId, 120, 32, targetCwd, normalizeProxy(settings.proxy));
       const profileName = profileLabel(activeTab.profileId, profiles);
       const nextPane: Pane = {
         id: makeId("pane"),
@@ -788,11 +876,20 @@ export default function App() {
     setQueuedCommand({ id: makeId("command"), value: command, sessionId: targetPane.sessionId });
   }
 
+  const proxy = normalizeProxy(settings.proxy);
+  const activeWorkspace = (settings.namedWorkspaces || []).find((item) => item.id === activeNamedWorkspaceId) ?? null;
+  const activeWorkspaceLabel =
+    activeWorkspace?.name
+    || settings.workspaceRoot?.split(/[\\/]/).filter(Boolean).slice(-1)[0]
+    || "No workspace";
+
   const paletteCommands = useMemo<PaletteCommand[]>(() => {
     const base: PaletteCommand[] = [
       { id: "new-tab", label: "New terminal tab", description: "Open the selected shell profile", shortcut: "Ctrl T", keywords: "shell terminal", run: () => void openTab(selectedProfileId) },
       { id: "split", label: "Split active pane", description: "Create a second terminal pane", shortcut: "Ctrl Shift D", run: () => void splitActiveTab() },
       { id: "save-workspace", label: "Save current workspace", description: "Store tabs, panes, and directories", keywords: "session layout", run: saveNamedWorkspace },
+      { id: "switch-workspace", label: "Switch saved workspace…", description: "Pick from your saved workspaces", shortcut: "Ctrl Alt ←/→", keywords: "workspace switch session layout", run: () => setSwitcherAnchor({ x: Math.max(24, window.innerWidth / 2 - 130), y: 96 }) },
+      { id: "toggle-proxy", label: proxy.enabled ? "Disable local proxy" : "Enable local proxy", description: `${proxyTargetLabel(proxy)} · applies to new sessions`, shortcut: "Ctrl Alt P", keywords: "proxy network http clash direct", run: toggleProxy },
       { id: "history", label: "Open command history", description: "Search, copy, or rerun commands", shortcut: "Ctrl Shift R", run: () => setHistoryOpen(true) },
       { id: "sidebar", label: workspaceOpen ? "Hide workspace sidebar" : "Show workspace sidebar", description: "Toggle workspace and tab navigation", shortcut: "Ctrl B", run: () => setWorkspaceOpen((current) => !current) },
       { id: "settings", label: "Open settings", description: "Theme, font, cursor, and startup shell", shortcut: "Ctrl ,", run: () => setSettingsOpen(true) },
@@ -812,7 +909,7 @@ export default function App() {
       run: () => void loadNamedWorkspace(workspace.id),
     }));
     return [...base, ...profileCommands, ...workspaceCommands];
-  }, [profiles, selectedProfileId, settings.namedWorkspaces, workspaceOpen, activeTabId, tabs]);
+  }, [profiles, selectedProfileId, settings.namedWorkspaces, workspaceOpen, activeTabId, tabs, proxy, activeNamedWorkspaceId]);
 
   const paneGridStyle =
     activeTab && activeTab.panes.length === 2
@@ -838,6 +935,9 @@ export default function App() {
         profiles={profiles}
         selectedProfileId={selectedProfileId}
         onSelectedProfileChange={setSelectedProfileId}
+        proxyEnabled={proxy.enabled}
+        proxyTarget={proxyTargetLabel(proxy)}
+        onToggleProxy={toggleProxy}
         onNewTab={() => void openTab(selectedProfileId, profiles, settings.workspaceRoot || null)}
         onOpenPalette={() => setPaletteOpen(true)}
         onSplit={() => void splitActiveTab()}
@@ -864,8 +964,19 @@ export default function App() {
         <div className={`app-main-content ${filePreview || filePreviewError ? "has-context-preview" : ""}`}>
           <div className="terminal-context-bar">
             <div>
-              <span className={`context-status-dot is-${activePane?.sessionState || "idle"}`} />
-              <strong>{settings.workspaceRoot?.split(/[\\/]/).filter(Boolean).slice(-1)[0] || "No workspace"}</strong>
+              <button
+                type="button"
+                className="context-workspace-button"
+                title="Switch saved workspace · Ctrl+Alt+←/→ to cycle"
+                onClick={(event) => {
+                  const bounds = event.currentTarget.getBoundingClientRect();
+                  setSwitcherAnchor({ x: bounds.left, y: bounds.bottom + 6 });
+                }}
+              >
+                <span className={`context-status-dot is-${activePane?.sessionState || "idle"}`} />
+                <strong>{activeWorkspaceLabel}</strong>
+                <span className="context-workspace-caret" aria-hidden="true">▾</span>
+              </button>
               {activePane && <span className={`runtime-context-badge is-${activePane.runtimeMode}`}>{activePane.runtimeMode === "claude" ? "Claude active" : "Shell"}</span>}
               <span>{activePane?.cwd || settings.workspaceRoot || "Choose a folder to give AI sessions project context"}</span>
             </div>
@@ -962,6 +1073,19 @@ export default function App() {
       </div>
 
       <CommandPalette open={paletteOpen} commands={paletteCommands} onClose={() => setPaletteOpen(false)} />
+      {switcherAnchor && (
+        <WorkspaceSwitcher
+          anchor={switcherAnchor}
+          workspaces={settings.namedWorkspaces || []}
+          activeWorkspaceId={activeNamedWorkspaceId}
+          onSelect={(workspaceId) => void loadNamedWorkspace(workspaceId)}
+          onSaveCurrent={() => {
+            setSwitcherAnchor(null);
+            saveNamedWorkspace();
+          }}
+          onClose={() => setSwitcherAnchor(null)}
+        />
+      )}
       <HistoryPanel open={historyOpen} onClose={() => setHistoryOpen(false)} onRun={runCommandFromHistory} />
 
       <SettingsPanel

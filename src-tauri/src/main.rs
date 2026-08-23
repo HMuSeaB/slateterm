@@ -6,7 +6,7 @@ mod settings;
 
 use models::{
     default_profiles, shell_profiles, CreateSessionResponse, FileEntry, FilePreview, Profile,
-    Settings,
+    ProxyConfig, Settings,
 };
 use pty::SessionManager;
 use std::{ptr, thread, time::Duration};
@@ -65,10 +65,11 @@ fn create_session(
     cols: u16,
     rows: u16,
     cwd: Option<String>,
+    proxy: Option<ProxyConfig>,
 ) -> Result<CreateSessionResponse, String> {
     state
         .sessions
-        .create_session(app, profile_id, cols, rows, cwd)
+        .create_session(app, profile_id, cols, rows, cwd, proxy)
 }
 
 #[tauri::command]

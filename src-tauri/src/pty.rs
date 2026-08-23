@@ -19,7 +19,7 @@ use windows_sys::Win32::{
 
 use crate::models::{
     default_profiles, CommandBlockEvent, CreateSessionResponse, CwdEvent, ErrorEvent, ExitEvent,
-    OutputEvent, TitleEvent,
+    OutputEvent, ProxyConfig, TitleEvent,
 };
 
 pub struct SessionManager {
@@ -46,6 +46,7 @@ impl SessionManager {
         cols: u16,
         rows: u16,
         cwd: Option<String>,
+        proxy: Option<ProxyConfig>,
     ) -> Result<CreateSessionResponse, String> {
         let profile = default_profiles()
             .into_iter()
@@ -65,6 +66,11 @@ impl SessionManager {
         let mut command = CommandBuilder::new(profile.command);
         for arg in profile.args {
             command.arg(arg);
+        }
+        if let Some(config) = proxy.filter(|candidate| candidate.enabled) {
+            for (key, value) in config.env_pairs() {
+                command.env(key, value);
+            }
         }
         let resolved_cwd = if let Some(ref custom_cwd) = cwd {
             let path = Path::new(custom_cwd);

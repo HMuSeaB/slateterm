@@ -110,6 +110,40 @@ impl Default for NamedWorkspace {
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(default, rename_all = "camelCase")]
+pub struct ProxyConfig {
+    pub enabled: bool,
+    pub host: String,
+    pub port: u16,
+}
+
+impl Default for ProxyConfig {
+    fn default() -> Self {
+        Self {
+            enabled: false,
+            host: "127.0.0.1".into(),
+            port: 7890,
+        }
+    }
+}
+
+impl ProxyConfig {
+    pub fn env_pairs(&self) -> Vec<(String, String)> {
+        let url = format!("http://{}:{}", self.host, self.port);
+        vec![
+            ("HTTP_PROXY".into(), url.clone()),
+            ("HTTPS_PROXY".into(), url.clone()),
+            ("ALL_PROXY".into(), url.clone()),
+            ("http_proxy".into(), url.clone()),
+            ("https_proxy".into(), url.clone()),
+            ("all_proxy".into(), url),
+            ("NO_PROXY".into(), "localhost,127.0.0.1".into()),
+            ("no_proxy".into(), "localhost,127.0.0.1".into()),
+        ]
+    }
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(default, rename_all = "camelCase")]
 pub struct Settings {
     pub theme: String,
     pub font_family: String,
@@ -123,6 +157,7 @@ pub struct Settings {
     pub workspace_root: Option<String>,
     pub saved_state: Option<WorkspaceState>,
     pub named_workspaces: Vec<NamedWorkspace>,
+    pub proxy: ProxyConfig,
 }
 
 impl Default for Settings {
@@ -140,6 +175,7 @@ impl Default for Settings {
             workspace_root: None,
             saved_state: None,
             named_workspaces: Vec::new(),
+            proxy: ProxyConfig::default(),
         }
     }
 }
@@ -398,6 +434,8 @@ function global:prompt {
 }
 Import-Module PSReadLine -ErrorAction SilentlyContinue
 if (Get-Module PSReadLine) {
+    Set-PSReadLineOption -PredictionSource History -ErrorAction SilentlyContinue
+    Set-PSReadLineOption -PredictionViewStyle GhostView -ErrorAction SilentlyContinue
     Set-PSReadLineKeyHandler -Key Enter -ScriptBlock {
         param($key, $arg)
         $line = ''

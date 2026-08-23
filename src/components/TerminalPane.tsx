@@ -6,7 +6,7 @@ import { SearchAddon } from "@xterm/addon-search";
 import { WebLinksAddon } from "@xterm/addon-web-links";
 import { Terminal } from "@xterm/xterm";
 import "@xterm/xterm/css/xterm.css";
-import { getSuggestion, recordCommand, type SuggestionResult } from "../lib/completionEngine";
+import { recordCommand } from "../lib/completionEngine";
 import {
   clipboardHasImage,
   listDirectory,
@@ -292,15 +292,11 @@ export default function TerminalPane({
   const [blocksOpen, setBlocksOpen] = useState(false);
   const [commandBlocks, setCommandBlocks] = useState<CommandBlock[]>([]);
   const [collapsedBlocks, setCollapsedBlocks] = useState<Record<string, boolean>>({});
-
-  const [inputBuffer, setInputBuffer] = useState("");
-  const [suggestion, setSuggestion] = useState<SuggestionResult | null>(null);
   const [pathCompletion, setPathCompletion] = useState<PathCompletion | null>(null);
   const [pathCompletionIndex, setPathCompletionIndex] = useState(0);
   const [pendingPathAttachments, setPendingPathAttachments] = useState<PendingPathAttachment[]>([]);
   const [isDragging, setIsDragging] = useState(false);
   const [runtimeMode, setRuntimeMode] = useState<PaneRuntimeMode>(persistedRuntimeMode);
-  const suggestionRef = useRef<SuggestionResult | null>(null);
   const pathCompletionRef = useRef<PathCompletion | null>(null);
   const pathCompletionIndexRef = useRef(0);
   const pathCompletionRequestRef = useRef(0);
@@ -455,10 +451,6 @@ export default function TerminalPane({
 
   function updateBuffer(nextVal: string) {
     inputBufferRef.current = nextVal;
-    setInputBuffer(nextVal);
-    const nextSugg = getSuggestion(nextVal);
-    suggestionRef.current = nextSugg;
-    setSuggestion(nextSugg);
 
     const requestId = ++pathCompletionRequestRef.current;
     if (isClaudeRuntime()) {
@@ -744,8 +736,6 @@ export default function TerminalPane({
           pendingPathAttachmentsRef.current.map((attachment) => attachment.path),
         );
         const separator = inputBufferRef.current.trim() ? " " : "";
-        const combinedInput = `${inputBufferRef.current}${separator}${attachmentText}`;
-        recordCommand(combinedInput);
         void writeInput(sessionId, `${separator}${attachmentText}\r`);
         clearPendingPathAttachments();
         updateBuffer("");
@@ -764,7 +754,8 @@ export default function TerminalPane({
       void writeInput(sessionId, data);
 
       if (data === "\r" || data === "\n") {
-        if (inputBufferRef.current.trim()) {
+        // 只把 shell 会话的输入记进命令历史；Claude 对话内容不算命令
+        if (inputBufferRef.current.trim() && !isClaudeRuntime()) {
           recordCommand(inputBufferRef.current);
         }
         updateBuffer("");
@@ -790,7 +781,6 @@ export default function TerminalPane({
 
       const key = event.key.toLowerCase();
       const hasSelection = terminal.hasSelection();
-      const activeSugg = suggestionRef.current;
       const activePathCompletion = pathCompletionRef.current;
 
       if (activePathCompletion) {
@@ -814,26 +804,7 @@ export default function TerminalPane({
         }
       }
 
-      if ((event.key === "Tab" || event.key === "ArrowRight" || (event.ctrlKey && event.code === "Space")) && activeSugg) {
-        event.preventDefault();
-        const suffix = activeSugg.completionSuffix;
-        void writeInput(sessionId, suffix);
-        updateBuffer(activeSugg.fullCommand);
-        return false;
-      }
-
-      if (event.ctrlKey && !event.shiftKey && key === "c" && hasSelection) {
-        const selectedText = terminal.getSelection();
-        if (selectedText) {
-          void writeClipboardText(selectedText)
-            .then(() => setSessionStatus({ tone: "info", message: "Copied selection." }))
-            .catch((error) => setSessionStatus({ tone: "error", message: `Copy failed: ${String(error)}` }));
-          terminal.clearSelection();
-          return false;
-        }
-      }
-
-      if (event.ctrlKey && event.shiftKey && key === "c") {
+      if ((event.ctrlKey && !event.shiftKey && key === "c" && hasSelection) || (event.ctrlKey && event.shiftKey && key === "c")) {
         const selectedText = terminal.getSelection();
         if (selectedText) {
           void writeClipboardText(selectedText)
@@ -1282,15 +1253,6 @@ export default function TerminalPane({
                 </button>
               ))}
             </div>
-          </div>
-        )}
-
-        {suggestion && !pathCompletion && (
-          <div className="autosuggest-hint">
-            <span className="hint-label">SLATE SUGGESTION</span>
-            <span className="hint-matched">{inputBuffer}</span>
-            <span className="hint-suffix">{suggestion.completionSuffix}</span>
-            <span className="hint-kbd">Press Tab / → to complete</span>
           </div>
         )}
 

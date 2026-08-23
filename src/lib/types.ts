@@ -45,6 +45,12 @@ export type NamedWorkspace = {
   updatedAt: string;
 };
 
+export type ProxySettings = {
+  enabled: boolean;
+  host: string;
+  port: number;
+};
+
 export type Settings = {
   theme: ThemeMode;
   fontFamily: string;
@@ -58,6 +64,7 @@ export type Settings = {
   workspaceRoot?: string | null;
   savedState?: WorkspaceState | null;
   namedWorkspaces?: NamedWorkspace[];
+  proxy?: ProxySettings;
 };
 
 export type PaneRuntimeMode = "shell" | "claude";

@@ -1,6 +1,6 @@
 import type { Profile } from "../lib/types";
 
-type IconName = "commands" | "split" | "project" | "settings";
+type IconName = "commands" | "split" | "project" | "settings" | "proxy";
 
 function ToolbarIcon({ name }: { name: IconName }) {
   if (name === "commands") {
@@ -12,6 +12,15 @@ function ToolbarIcon({ name }: { name: IconName }) {
   if (name === "project") {
     return <svg viewBox="0 0 20 20" aria-hidden="true"><path d="M3.5 6.5h5l1.5 2h6.5v7.5h-13z" /><path d="M3.5 6.5V4.5h5l1.5 2" /></svg>;
   }
+  if (name === "proxy") {
+    return (
+      <svg viewBox="0 0 20 20" aria-hidden="true">
+        <circle cx="10" cy="10" r="6.5" />
+        <path d="M3.5 10h13" />
+        <path d="M10 3.5c-4.7 4-4.7 9 0 13 4.7-4 4.7-9 0-13z" />
+      </svg>
+    );
+  }
   return <svg viewBox="0 0 20 20" aria-hidden="true"><circle cx="10" cy="10" r="3" /><path d="M10 2.8v2M10 15.2v2M2.8 10h2M15.2 10h2M4.9 4.9l1.4 1.4M13.7 13.7l1.4 1.4M15.1 4.9l-1.4 1.4M6.3 13.7l-1.4 1.4" /></svg>;
 }
 
@@ -19,6 +28,9 @@ type Props = {
   profiles: Profile[];
   selectedProfileId: string;
   onSelectedProfileChange: (profileId: string) => void;
+  proxyEnabled: boolean;
+  proxyTarget: string;
+  onToggleProxy: () => void;
   onNewTab: () => void;
   onOpenPalette: () => void;
   onSplit: () => void;
@@ -30,6 +42,9 @@ export default function TitleBar({
   profiles,
   selectedProfileId,
   onSelectedProfileChange,
+  proxyEnabled,
+  proxyTarget,
+  onToggleProxy,
   onNewTab,
   onOpenPalette,
   onSplit,
@@ -37,6 +52,9 @@ export default function TitleBar({
   onToggleSettings,
 }: Props) {
   const launchProfiles = profiles.filter((profile) => profile.featured && (profile.category === "shell" || profile.id === "claude"));
+  const proxyTitle = proxyEnabled
+    ? `Proxy on · ${proxyTarget} · new sessions only · click for direct (Ctrl+Alt+P)`
+    : `Direct connection · click to route new sessions via ${proxyTarget} (Ctrl+Alt+P)`;
 
   return (
     <header className="titlebar titlebar-compact">
@@ -62,6 +80,16 @@ export default function TitleBar({
           ))}
         </select>
         <button type="button" className="primary-button" onClick={onNewTab}>New tab</button>
+        <button
+          type="button"
+          className={`icon-button proxy-toggle ${proxyEnabled ? "is-on" : ""}`}
+          title={proxyTitle}
+          aria-label={proxyEnabled ? "Disable local proxy" : "Enable local proxy"}
+          aria-pressed={proxyEnabled}
+          onClick={onToggleProxy}
+        >
+          <ToolbarIcon name="proxy" />
+        </button>
         <button type="button" className="icon-button" title="Commands (Ctrl+Shift+P)" aria-label="Open commands" onClick={onOpenPalette}><ToolbarIcon name="commands" /></button>
         <button type="button" className="icon-button" title="Split active tab" aria-label="Split active tab" onClick={onSplit}><ToolbarIcon name="split" /></button>
         <button type="button" className="icon-button" title="Toggle project context (Ctrl+B)" aria-label="Toggle project context" onClick={onToggleWorkspaces}><ToolbarIcon name="project" /></button>
@@ -70,4 +98,3 @@ export default function TitleBar({
     </header>
   );
 }
-

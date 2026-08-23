@@ -1,30 +1,6 @@
 const HISTORY_STORAGE_KEY = "slateterm_command_history";
 const MAX_HISTORY_ITEMS = 500;
 
-const BUILTIN_COMMANDS: string[] = [
-  "pnpm tauri build",
-  "pnpm tauri dev",
-  "pnpm run dev",
-  "pnpm install",
-  "pnpm test",
-  "pnpm build",
-  "git status",
-  "git diff",
-  "git log --oneline",
-  "git add .",
-  "git commit -m \"\"",
-  "git push",
-  "git pull",
-  "cargo build",
-  "cargo run",
-  "cargo check",
-  "cargo test",
-  "claude",
-  "dir",
-  "cls",
-  "clear",
-];
-
 function loadHistory(): string[] {
   try {
     const raw = localStorage.getItem(HISTORY_STORAGE_KEY);
@@ -79,47 +55,4 @@ export function clearHistory() {
   historyCache = [];
   saveHistory([]);
   window.dispatchEvent(new CustomEvent("slateterm:history-change", { detail: [] }));
-}
-
-export type SuggestionResult = {
-  fullCommand: string;
-  completionSuffix: string;
-};
-
-export function getSuggestion(input: string): SuggestionResult | null {
-  if (!input || !input.trimStart()) {
-    return null;
-  }
-
-  const prompt = input;
-  const lowerPrompt = prompt.toLowerCase();
-  const history = getHistory();
-
-  // 优先匹配历史记录中前缀相同的最新指令（忽略大小写前缀）
-  for (const cmd of history) {
-    if (cmd.toLowerCase().startsWith(lowerPrompt) && cmd !== prompt) {
-      const suffix = cmd.slice(prompt.length);
-      if (suffix) {
-        return {
-          fullCommand: prompt + suffix,
-          completionSuffix: suffix,
-        };
-      }
-    }
-  }
-
-  // 其次从内置命令库中查找
-  for (const cmd of BUILTIN_COMMANDS) {
-    if (cmd.toLowerCase().startsWith(lowerPrompt) && cmd !== prompt) {
-      const suffix = cmd.slice(prompt.length);
-      if (suffix) {
-        return {
-          fullCommand: prompt + suffix,
-          completionSuffix: suffix,
-        };
-      }
-    }
-  }
-
-  return null;
 }
