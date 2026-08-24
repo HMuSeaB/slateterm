@@ -434,8 +434,8 @@ function global:prompt {
 }
 Import-Module PSReadLine -ErrorAction SilentlyContinue
 if (Get-Module PSReadLine) {
-    Set-PSReadLineOption -PredictionSource History -ErrorAction SilentlyContinue
-    Set-PSReadLineOption -PredictionViewStyle GhostView -ErrorAction SilentlyContinue
+    try { Set-PSReadLineOption -PredictionSource History -ErrorAction Stop } catch { }
+    try { Set-PSReadLineOption -PredictionViewStyle InlineView -ErrorAction Stop } catch { }
     Set-PSReadLineKeyHandler -Key Enter -ScriptBlock {
         param($key, $arg)
         $line = ''
