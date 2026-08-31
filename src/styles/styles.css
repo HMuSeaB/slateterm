@@ -2031,15 +2031,15 @@ button {
   place-items: center;
   border: 2px dashed #f59e0b;
   border-radius: 14px;
-  background: rgba(17, 20, 26, 0.82);
-  backdrop-filter: blur(6px);
+  background: rgba(17, 20, 26, 0.55);
+  backdrop-filter: blur(2px);
   pointer-events: none;
   animation: fadeIn 0.15s ease-out;
 }
 
 .theme-paper .drag-drop-overlay {
   border-color: #145f5c;
-  background: rgba(247, 243, 232, 0.86);
+  background: rgba(247, 243, 232, 0.72);
 }
 
 .drop-badge {
@@ -2069,6 +2069,34 @@ button {
 .drop-badge span {
   font-size: 12px;
   opacity: 0.8;
+}
+
+.drop-badge-files {
+  display: flex;
+  flex-wrap: wrap;
+  justify-content: center;
+  gap: 4px;
+  max-width: 340px;
+}
+
+.drop-badge-files span {
+  max-width: 220px;
+  padding: 2px 10px;
+  overflow: hidden;
+  border-radius: 999px;
+  background: rgba(245, 158, 11, 0.18);
+  opacity: 1;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.drop-badge-files .drop-badge-more {
+  padding: 2px 6px;
+  background: transparent;
+}
+
+.theme-paper .drop-badge-files span {
+  background: rgba(20, 95, 92, 0.12);
 }
 
 .settings-overlay {

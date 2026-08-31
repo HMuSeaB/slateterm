@@ -85,8 +85,23 @@ type PendingPathAttachment = {
 const CLAUDE_IMAGE_ATTACH_SEQUENCE = "\x1bv";
 const MAX_COMMAND_BLOCK_OUTPUT = 1_000_000;
 
+// 常规字符（含中文等非 ASCII）直接裸写；其余一律加引号，兼容 PowerShell 与 cmd。
+// 含 $ 或反引号的路径在 PowerShell 双引号里会被展开，改用单引号（cmd 下极罕见，接受损失）
+const SHELL_SAFE_PATH = /^[\p{L}\p{N}_.:\\/-]+$/u;
+const SHELL_EXPANDS_IN_QUOTES = /[$`]/;
+
 function formatTerminalPaths(paths: string[]) {
-  return paths.map((path) => (path.includes(" ") ? `"${path}"` : path)).join(" ");
+  return paths
+    .map((path) => {
+      if (SHELL_SAFE_PATH.test(path)) {
+        return path;
+      }
+      if (SHELL_EXPANDS_IN_QUOTES.test(path)) {
+        return `'${path.replace(/'/g, "''")}'`;
+      }
+      return `"${path}"`;
+    })
+    .join(" ");
 }
 
 function pathBaseName(path: string) {
@@ -311,6 +326,7 @@ export default function TerminalPane({
   const [pathCompletionIndex, setPathCompletionIndex] = useState(0);
   const [pendingPathAttachments, setPendingPathAttachments] = useState<PendingPathAttachment[]>([]);
   const [isDragging, setIsDragging] = useState(false);
+  const [dragPaths, setDragPaths] = useState<string[]>([]);
   const [runtimeMode, setRuntimeMode] = useState<PaneRuntimeMode>(persistedRuntimeMode);
   const pathCompletionRef = useRef<PathCompletion | null>(null);
   const pathCompletionIndexRef = useRef(0);
@@ -416,13 +432,13 @@ export default function TerminalPane({
       .filter((path) => !existingPaths.has(path.toLowerCase()))
       .map(createPathAttachment);
     if (additions.length === 0) {
-      setSessionStatus({ tone: "info", message: "Those paths are already attached." });
+      setSessionStatus({ tone: "info", message: "这些路径已经在附件里了。" });
       return;
     }
     updatePendingPathAttachments([...current, ...additions]);
     setSessionStatus({
       tone: "info",
-      message: `${additions.length} path${additions.length === 1 ? "" : "s"} attached. Press Enter to send to Claude.`,
+      message: `已附加 ${additions.length} 个路径，回车随消息发送给 Claude。`,
     });
   }
 
@@ -512,7 +528,7 @@ export default function TerminalPane({
     focusTerminal();
   }
 
-  async function attachClipboardImageToClaude(message = "Attaching image to Claude Code...") {
+  async function attachClipboardImageToClaude(message = "正在把图片附加给 Claude Code...") {
     setSessionStatus({ tone: "info", message });
     await writeInput(sessionId, CLAUDE_IMAGE_ATTACH_SEQUENCE);
     await new Promise((resolve) => window.setTimeout(resolve, 160));
@@ -554,11 +570,11 @@ export default function TerminalPane({
         try {
           attachedAsImage = await prepareDroppedImage(path);
         } catch (error) {
-          setSessionStatus({ tone: "error", message: `Image attachment failed: ${String(error)}` });
+          setSessionStatus({ tone: "error", message: `图片附加失败：${String(error)}` });
           continue;
         }
         if (attachedAsImage) {
-          await attachClipboardImageToClaude(`Attaching ${pathBaseName(path)} to Claude Code...`);
+          await attachClipboardImageToClaude(`正在把 ${pathBaseName(path)} 附加给 Claude Code...`);
           continue;
         }
         regularPaths.push(path);
@@ -571,7 +587,7 @@ export default function TerminalPane({
     }
 
     const formattedPaths = formatTerminalPaths(paths);
-    setSessionStatus({ tone: "info", message: `Pasted path: ${formattedPaths}` });
+    setSessionStatus({ tone: "info", message: `已插入路径：${formattedPaths}` });
     updateBuffer(inputBufferRef.current + formattedPaths);
     await writeInput(sessionId, formattedPaths);
   }
@@ -588,7 +604,7 @@ export default function TerminalPane({
         if (!isClaudeRuntime()) {
           throw new Error("Start Claude Code before attaching a clipboard image.");
         }
-        await attachClipboardImageToClaude("Attaching clipboard history image to Claude Code...");
+        await attachClipboardImageToClaude("正在把剪贴板图片附加给 Claude Code...");
         return;
       }
       if (imageFile) {
@@ -598,7 +614,7 @@ export default function TerminalPane({
         const pngBytes = await imageBlobToPngBytes(imageFile);
         const imagePath = await saveTempImage(pngBytes, "png");
         await writeClipboardImageFile(imagePath);
-        await attachClipboardImageToClaude("Attaching pasted image to Claude Code...");
+        await attachClipboardImageToClaude("正在把粘贴的图片附加给 Claude Code...");
         return;
       }
       const text = eventText || (await readClipboardText());
@@ -614,6 +630,7 @@ export default function TerminalPane({
 
   function handleDragOver(event: React.DragEvent<HTMLDivElement>) {
     event.preventDefault();
+    setDragPaths([]);
     if (!isDragging) setIsDragging(true);
   }
 
@@ -633,7 +650,7 @@ export default function TerminalPane({
       .map((file) => (file as File & { path?: string }).path)
       .filter((path): path is string => Boolean(path));
     void handleDroppedPaths(paths).catch((error) =>
-      setSessionStatus({ tone: "error", message: `Drop failed: ${String(error)}` }),
+      setSessionStatus({ tone: "error", message: `拖放失败：${String(error)}` }),
     );
   }
 
@@ -1086,18 +1103,14 @@ export default function TerminalPane({
     });
 
     const webview = getCurrentWebview();
-    let scaleFactor = window.devicePixelRatio || 1;
-    void webview.window.scaleFactor().then((value) => {
-      if (mounted && value > 0) {
-        scaleFactor = value;
-      }
-    });
 
     function isNativeDragTarget(position: { x: number; y: number }) {
       const container = containerRef.current?.closest<HTMLElement>(".terminal-shell");
       if (!container) {
         return activeRef.current;
       }
+      // 实时读取：devicePixelRatio 会随窗口所在显示器更新，跨屏拖拽不会用到过期的缩放比
+      const scaleFactor = window.devicePixelRatio || 1;
       const logicalPosition = {
         x: position.x / scaleFactor,
         y: position.y / scaleFactor,
@@ -1116,6 +1129,9 @@ export default function TerminalPane({
         return;
       }
       if (event.payload.type === "enter" || event.payload.type === "over") {
+        if (event.payload.type === "enter") {
+          setDragPaths(event.payload.paths);
+        }
         const isTarget = isNativeDragTarget(event.payload.position);
         nativeDragTargetRef.current = isTarget;
         nativeDragActiveRef.current = isTarget;
@@ -1126,6 +1142,7 @@ export default function TerminalPane({
         nativeDragTargetRef.current = false;
         nativeDragActiveRef.current = false;
         setIsDragging(false);
+        setDragPaths([]);
         return;
       }
 
@@ -1135,13 +1152,14 @@ export default function TerminalPane({
       nativeDragTargetRef.current = false;
       nativeDragActiveRef.current = false;
       setIsDragging(false);
+      setDragPaths([]);
       if (!isTarget) {
         return;
       }
       lastNativeDropRef.current = performance.now();
       onActivate();
       void handleDroppedPaths(event.payload.paths).catch((error) =>
-        setSessionStatus({ tone: "error", message: `Drop failed: ${String(error)}` }),
+        setSessionStatus({ tone: "error", message: `拖放失败：${String(error)}` }),
       );
     });
 
@@ -1156,6 +1174,8 @@ export default function TerminalPane({
       void unlistenDrop.then((fn) => fn());
     };
   }, [sessionId]);
+
+  const claudeLikeDrop = runtimeMode === "claude" || profileCategory === "ai";
 
   return (
     <section
@@ -1199,11 +1219,19 @@ export default function TerminalPane({
         {isDragging && (
           <div className="drag-drop-overlay">
             <div className="drop-badge">
-              <strong>{runtimeMode === "claude" || profileCategory === "ai" ? "ATTACH TO CLAUDE" : "DROP FILE PATH INTO TERMINAL"}</strong>
-              <span>
-                {runtimeMode === "claude" || profileCategory === "ai"
-                  ? "Images attach as image chips; other files and folders stay as paths"
-                  : "Files and folders are inserted as absolute paths"}
+              <strong>{claudeLikeDrop ? "附加到 Claude" : "插入到终端"}</strong>
+              {dragPaths.length > 0 && (
+                <div className="drop-badge-files">
+                  {dragPaths.slice(0, 3).map((path) => (
+                    <span key={path} title={path}>{pathBaseName(path)}</span>
+                  ))}
+                  {dragPaths.length > 3 && <span className="drop-badge-more">+{dragPaths.length - 3}</span>}
+                </div>
+              )}
+              <span className="drop-badge-hint">
+                {claudeLikeDrop
+                  ? "图片转为图片附件，其他文件与文件夹作为路径附件"
+                  : "插入自动加引号的绝对路径，不会回车执行"}
               </span>
             </div>
           </div>
@@ -1285,7 +1313,7 @@ export default function TerminalPane({
           <div ref={containerRef} className="terminal-host" />
 
           {pendingPathAttachments.length > 0 && (
-            <div className="claude-path-attachments" aria-label="Paths attached to the next Claude message">
+            <div className="claude-path-attachments" aria-label="等待随下一条消息发送的路径附件">
               <div className="claude-path-attachment-list">
                 {pendingPathAttachments.map((attachment) => (
                   <div key={attachment.id} className="claude-path-attachment" title={attachment.path}>
@@ -1296,7 +1324,7 @@ export default function TerminalPane({
                     </span>
                     <button
                       type="button"
-                      aria-label={`Remove ${attachment.name}`}
+                      aria-label={`移除 ${attachment.name}`}
                       onMouseDown={(event) => event.preventDefault()}
                       onClick={() => removePendingPathAttachment(attachment.id)}
                     >
@@ -1306,8 +1334,8 @@ export default function TerminalPane({
                 ))}
               </div>
               <div className="claude-path-attachment-hint">
-                <span>{pendingPathAttachments.length} attached</span>
-                <span>Enter sends with your prompt · Ctrl+C clears</span>
+                <span>已附加 {pendingPathAttachments.length} 个</span>
+                <span>回车随消息发送 · 空输入时 Backspace 撤销一个 · Ctrl+C 清空</span>
               </div>
             </div>
           )}
