@@ -1,12 +1,20 @@
 import { listen } from "@tauri-apps/api/event";
-import { getCurrentWebview } from "@tauri-apps/api/webview";
 import { useEffect, useRef, useState } from "react";
 import { FitAddon } from "@xterm/addon-fit";
 import { SearchAddon } from "@xterm/addon-search";
 import { WebLinksAddon } from "@xterm/addon-web-links";
 import { Terminal } from "@xterm/xterm";
 import "@xterm/xterm/css/xterm.css";
+import { PathAttachmentChips } from "./PathAttachmentChips";
+import { DropOverlay } from "./DropOverlay";
 import { recordCommand } from "../lib/completionEngine";
+import { detectedImageExtension, imageBlobToPngBytes, imageMimeType } from "../lib/imageBytes";
+import {
+  createPathAttachment,
+  formatTerminalPaths,
+  pathBaseName,
+  type PendingPathAttachment,
+} from "../lib/paths";
 import {
   clipboardHasImage,
   listDirectory,
@@ -20,6 +28,7 @@ import {
   writeClipboardText,
   writeInput,
 } from "../lib/tauri";
+import { useNativeFileDrop } from "../hooks/useNativeFileDrop";
 import type {
   CommandBlock,
   CommandBlockEvent,
@@ -75,97 +84,8 @@ type PathCompletion = {
   entries: FileEntry[];
 };
 
-type PendingPathAttachment = {
-  id: string;
-  path: string;
-  name: string;
-  badge: string;
-};
-
 const CLAUDE_IMAGE_ATTACH_SEQUENCE = "\x1bv";
 const MAX_COMMAND_BLOCK_OUTPUT = 1_000_000;
-
-// 常规字符（含中文等非 ASCII）直接裸写；其余一律加引号，兼容 PowerShell 与 cmd。
-// 含 $ 或反引号的路径在 PowerShell 双引号里会被展开，改用单引号（cmd 下极罕见，接受损失）
-const SHELL_SAFE_PATH = /^[\p{L}\p{N}_.:\\/-]+$/u;
-const SHELL_EXPANDS_IN_QUOTES = /[$`]/;
-
-function formatTerminalPaths(paths: string[]) {
-  return paths
-    .map((path) => {
-      if (SHELL_SAFE_PATH.test(path)) {
-        return path;
-      }
-      if (SHELL_EXPANDS_IN_QUOTES.test(path)) {
-        return `'${path.replace(/'/g, "''")}'`;
-      }
-      return `"${path}"`;
-    })
-    .join(" ");
-}
-
-function pathBaseName(path: string) {
-  return path.split(/[\\/]/).filter(Boolean).pop() || path;
-}
-
-function pathBadge(path: string) {
-  const name = pathBaseName(path);
-  const extension = name.includes(".") ? name.split(".").pop()?.toUpperCase() : undefined;
-  if (!extension || extension.length > 4) {
-    return "DIR";
-  }
-  return extension;
-}
-
-function createPathAttachment(path: string): PendingPathAttachment {
-  return {
-    id: `${path.toLowerCase()}-${crypto.randomUUID()}`,
-    path,
-    name: pathBaseName(path),
-    badge: pathBadge(path),
-  };
-}
-
-function detectedImageExtension(bytes: Uint8Array) {
-  if (
-    bytes.length >= 8
-    && bytes[0] === 0x89
-    && bytes[1] === 0x50
-    && bytes[2] === 0x4e
-    && bytes[3] === 0x47
-    && bytes[4] === 0x0d
-    && bytes[5] === 0x0a
-    && bytes[6] === 0x1a
-    && bytes[7] === 0x0a
-  ) {
-    return "png";
-  }
-  if (bytes.length >= 3 && bytes[0] === 0xff && bytes[1] === 0xd8 && bytes[2] === 0xff) {
-    return "jpeg";
-  }
-  if (bytes.length >= 6) {
-    const header = String.fromCharCode(...bytes.slice(0, 6));
-    if (header === "GIF87a" || header === "GIF89a") {
-      return "gif";
-    }
-  }
-  if (bytes.length >= 12) {
-    const riff = String.fromCharCode(...bytes.slice(0, 4));
-    const webp = String.fromCharCode(...bytes.slice(8, 12));
-    if (riff === "RIFF" && webp === "WEBP") {
-      return "webp";
-    }
-  }
-  if (bytes.length >= 2 && bytes[0] === 0x42 && bytes[1] === 0x4d) {
-    return "bmp";
-  }
-  return null;
-}
-
-function imageMimeType(extension: string) {
-  if (extension === "jpeg") return "image/jpeg";
-  return `image/${extension}`;
-}
 
 function isClaudeCommand(command: string) {
   const normalized = command.trim().toLowerCase();
@@ -209,29 +129,6 @@ function completionValue(entry: FileEntry, completion: PathCompletion) {
   const prefix = separator >= 0 ? completion.typedPath.slice(0, separator + 1) : "";
   const value = `${prefix}${entry.name}${entry.isDirectory ? "\\" : ""}`;
   return `${completion.quote}${value}`;
-}
-
-async function imageBlobToPngBytes(blob: Blob) {
-  const bitmap = await createImageBitmap(blob);
-  try {
-    const canvas = document.createElement("canvas");
-    canvas.width = bitmap.width;
-    canvas.height = bitmap.height;
-    const context = canvas.getContext("2d");
-    if (!context) {
-      throw new Error("Canvas image conversion is unavailable");
-    }
-    context.drawImage(bitmap, 0, 0);
-    const pngBlob = await new Promise<Blob>((resolve, reject) => {
-      canvas.toBlob((converted) => {
-        if (converted) resolve(converted);
-        else reject(new Error("Could not convert the image to PNG"));
-      }, "image/png");
-    });
-    return new Uint8Array(await pngBlob.arrayBuffer());
-  } finally {
-    bitmap.close();
-  }
 }
 
 function themeForMode(theme: Settings["theme"]) {
@@ -335,12 +232,8 @@ export default function TerminalPane({
   const pendingPathAttachmentsRef = useRef<PendingPathAttachment[]>([]);
   const cwdRef = useRef(cwd);
   const activeRef = useRef(active);
-  const pointerInsideRef = useRef(false);
-  const nativeDragTargetRef = useRef(false);
   const profileCategoryRef = useRef(profileCategory);
   const runtimeModeRef = useRef<PaneRuntimeMode>(persistedRuntimeMode);
-  const nativeDragActiveRef = useRef(false);
-  const lastNativeDropRef = useRef(0);
   const sessionStatusTimerRef = useRef<number | null>(null);
 
   useEffect(() => {
@@ -625,32 +518,6 @@ export default function TerminalPane({
       }
     })().catch((error) =>
       setSessionStatus({ tone: "error", message: `Paste failed: ${String(error)}` }),
-    );
-  }
-
-  function handleDragOver(event: React.DragEvent<HTMLDivElement>) {
-    event.preventDefault();
-    setDragPaths([]);
-    if (!isDragging) setIsDragging(true);
-  }
-
-  function handleDragLeave() {
-    if (!nativeDragActiveRef.current) {
-      setIsDragging(false);
-    }
-  }
-
-  function handleDrop(event: React.DragEvent<HTMLDivElement>) {
-    event.preventDefault();
-    setIsDragging(false);
-    if (nativeDragActiveRef.current || performance.now() - lastNativeDropRef.current < 500) {
-      return;
-    }
-    const paths = Array.from(event.dataTransfer.files)
-      .map((file) => (file as File & { path?: string }).path)
-      .filter((path): path is string => Boolean(path));
-    void handleDroppedPaths(paths).catch((error) =>
-      setSessionStatus({ tone: "error", message: `拖放失败：${String(error)}` }),
     );
   }
 
@@ -1102,67 +969,6 @@ export default function TerminalPane({
       });
     });
 
-    const webview = getCurrentWebview();
-
-    function isNativeDragTarget(position: { x: number; y: number }) {
-      const container = containerRef.current?.closest<HTMLElement>(".terminal-shell");
-      if (!container) {
-        return activeRef.current;
-      }
-      // 实时读取：devicePixelRatio 会随窗口所在显示器更新，跨屏拖拽不会用到过期的缩放比
-      const scaleFactor = window.devicePixelRatio || 1;
-      const logicalPosition = {
-        x: position.x / scaleFactor,
-        y: position.y / scaleFactor,
-      };
-      const rect = container.getBoundingClientRect();
-      return (
-        logicalPosition.x >= rect.left
-        && logicalPosition.x <= rect.right
-        && logicalPosition.y >= rect.top
-        && logicalPosition.y <= rect.bottom
-      );
-    }
-
-    const unlistenDrop = webview.onDragDropEvent((event) => {
-      if (!mounted) {
-        return;
-      }
-      if (event.payload.type === "enter" || event.payload.type === "over") {
-        if (event.payload.type === "enter") {
-          setDragPaths(event.payload.paths);
-        }
-        const isTarget = isNativeDragTarget(event.payload.position);
-        nativeDragTargetRef.current = isTarget;
-        nativeDragActiveRef.current = isTarget;
-        setIsDragging(isTarget);
-        return;
-      }
-      if (event.payload.type === "leave") {
-        nativeDragTargetRef.current = false;
-        nativeDragActiveRef.current = false;
-        setIsDragging(false);
-        setDragPaths([]);
-        return;
-      }
-
-      const isTarget = isNativeDragTarget(event.payload.position)
-        || nativeDragTargetRef.current
-        || (activeRef.current && pointerInsideRef.current);
-      nativeDragTargetRef.current = false;
-      nativeDragActiveRef.current = false;
-      setIsDragging(false);
-      setDragPaths([]);
-      if (!isTarget) {
-        return;
-      }
-      lastNativeDropRef.current = performance.now();
-      onActivate();
-      void handleDroppedPaths(event.payload.paths).catch((error) =>
-        setSessionStatus({ tone: "error", message: `拖放失败：${String(error)}` }),
-      );
-    });
-
     return () => {
       mounted = false;
       void unlistenOutput.then((fn) => fn());
@@ -1171,9 +977,41 @@ export default function TerminalPane({
       void unlistenTitle.then((fn) => fn());
       void unlistenCwd.then((fn) => fn());
       void unlistenBlock.then((fn) => fn());
-      void unlistenDrop.then((fn) => fn());
     };
   }, [sessionId]);
+
+  // 原生拖放：事件机与命中判定集中在 useNativeFileDrop，不随 sessionId 重挂
+  useNativeFileDrop({
+    isTargetAt: isNativeDragTarget,
+    onDragEnter: setDragPaths,
+    onDragOver: setIsDragging,
+    onDrop: (paths) => {
+      onActivate();
+      void handleDroppedPaths(paths).catch((error) =>
+        setSessionStatus({ tone: "error", message: `拖放失败：${String(error)}` }),
+      );
+    },
+  });
+
+  function isNativeDragTarget(position: { x: number; y: number }) {
+    const container = containerRef.current?.closest<HTMLElement>(".terminal-shell");
+    if (!container) {
+      return activeRef.current;
+    }
+    // 实时读取：devicePixelRatio 会随窗口所在显示器更新，跨屏拖拽不会用到过期的缩放比
+    const scaleFactor = window.devicePixelRatio || 1;
+    const logicalPosition = {
+      x: position.x / scaleFactor,
+      y: position.y / scaleFactor,
+    };
+    const rect = container.getBoundingClientRect();
+    return (
+      logicalPosition.x >= rect.left
+      && logicalPosition.x <= rect.right
+      && logicalPosition.y >= rect.top
+      && logicalPosition.y <= rect.bottom
+    );
+  }
 
   const claudeLikeDrop = runtimeMode === "claude" || profileCategory === "ai";
 
@@ -1181,16 +1019,7 @@ export default function TerminalPane({
     <section
       className={`terminal-shell ${active ? "is-active" : ""}`}
       onMouseDown={onActivate}
-      onPointerEnter={() => {
-        pointerInsideRef.current = true;
-      }}
-      onPointerLeave={() => {
-        pointerInsideRef.current = false;
-      }}
       onPasteCapture={handlePasteCapture}
-      onDragOver={handleDragOver}
-      onDragLeave={handleDragLeave}
-      onDrop={handleDrop}
     >
       <header className="terminal-pane-header">
         <div className="terminal-pane-identity">
@@ -1216,26 +1045,7 @@ export default function TerminalPane({
 
       <div className={`terminal-pane-body ${blocksOpen && commandBlocks.length > 0 ? "has-blocks-drawer" : ""}`}>
         <div className={`terminal-surface ${pendingPathAttachments.length > 0 ? "has-path-attachments" : ""}`}>
-        {isDragging && (
-          <div className="drag-drop-overlay">
-            <div className="drop-badge">
-              <strong>{claudeLikeDrop ? "附加到 Claude" : "插入到终端"}</strong>
-              {dragPaths.length > 0 && (
-                <div className="drop-badge-files">
-                  {dragPaths.slice(0, 3).map((path) => (
-                    <span key={path} title={path}>{pathBaseName(path)}</span>
-                  ))}
-                  {dragPaths.length > 3 && <span className="drop-badge-more">+{dragPaths.length - 3}</span>}
-                </div>
-              )}
-              <span className="drop-badge-hint">
-                {claudeLikeDrop
-                  ? "图片转为图片附件，其他文件与文件夹作为路径附件"
-                  : "插入自动加引号的绝对路径，不会回车执行"}
-              </span>
-            </div>
-          </div>
-        )}
+        <DropOverlay visible={isDragging} claudeLike={claudeLikeDrop} paths={dragPaths} />
 
         {searchOpen && (
           <>
@@ -1312,33 +1122,7 @@ export default function TerminalPane({
 
           <div ref={containerRef} className="terminal-host" />
 
-          {pendingPathAttachments.length > 0 && (
-            <div className="claude-path-attachments" aria-label="等待随下一条消息发送的路径附件">
-              <div className="claude-path-attachment-list">
-                {pendingPathAttachments.map((attachment) => (
-                  <div key={attachment.id} className="claude-path-attachment" title={attachment.path}>
-                    <span className="claude-path-attachment-icon" aria-hidden="true">{attachment.badge}</span>
-                    <span className="claude-path-attachment-copy">
-                      <strong>{attachment.name}</strong>
-                      <small>{attachment.path}</small>
-                    </span>
-                    <button
-                      type="button"
-                      aria-label={`移除 ${attachment.name}`}
-                      onMouseDown={(event) => event.preventDefault()}
-                      onClick={() => removePendingPathAttachment(attachment.id)}
-                    >
-                      ×
-                    </button>
-                  </div>
-                ))}
-              </div>
-              <div className="claude-path-attachment-hint">
-                <span>已附加 {pendingPathAttachments.length} 个</span>
-                <span>回车随消息发送 · 空输入时 Backspace 撤销一个 · Ctrl+C 清空</span>
-              </div>
-            </div>
-          )}
+          <PathAttachmentChips attachments={pendingPathAttachments} onRemove={removePendingPathAttachment} />
         </div>
 
         {blocksOpen && commandBlocks.length > 0 && (

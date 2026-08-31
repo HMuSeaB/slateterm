@@ -2,6 +2,11 @@
 
 ## Unreleased
 
+- Refine the file drop overlay: show the dragged file names and count while hovering, soften the backdrop so terminal content stays readable, localize drop and attachment hints to Chinese, and quote dropped paths conservatively for both PowerShell and cmd.
+- Fix pane hit-testing for native file drops after moving the window across monitors with different scale factors by reading the live device pixel ratio.
+- Extend path completion from `cd` only to any command whose last argument contains a path separator, listing files and directories with folders first.
+- Enable PSReadLine Tab menu completion and restructure the frontend around extracted path utilities, image byte helpers, a `useNativeFileDrop` hook, and dedicated drop overlay / attachment chip components.
+
 ## v1.0.0 - 2026-08-04
 
 - Add Claude path attachment chips that collect dropped files and folders for the next prompt while ordinary shells continue to receive quoted paths directly.
