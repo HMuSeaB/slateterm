@@ -71,6 +71,7 @@ type PathCompletion = {
   basePath: string;
   typedPath: string;
   quote: string;
+  directoryOnly: boolean;
   entries: FileEntry[];
 };
 
@@ -158,11 +159,7 @@ function isClaudeCommand(command: string) {
   );
 }
 
-function parseCdPath(command: string, cwd?: string) {
-  const match = command.match(/^\s*cd(?:\s+|$)(["']?)([^"']*)$/i);
-  if (!match) return null;
-  const quote = match[1] || "";
-  const typedPath = match[2] || "";
+function buildPathQuery(typedPath: string, quote: string, cwd?: string) {
   const normalized = typedPath.replace(/\//g, "\\");
   const separator = normalized.lastIndexOf("\\");
   const directoryPart = separator >= 0 ? normalized.slice(0, separator + 1) : "";
@@ -174,10 +171,28 @@ function parseCdPath(command: string, cwd?: string) {
   return { basePath, namePart, quote, typedPath };
 }
 
+function parsePathArgument(command: string, cwd?: string) {
+  // cd 只接受目录，保持原有行为
+  const cdMatch = command.match(/^\s*cd(?:\s+|$)(["']?)([^"']*)$/i);
+  if (cdMatch) {
+    const parsed = buildPathQuery(cdMatch[2], cdMatch[1], cwd);
+    return parsed ? { ...parsed, directoryOnly: true } : null;
+  }
+
+  // 其他命令：最后一个词是带路径分隔符的裸 token 时才补全，文件与目录都列出；
+  // 含引号的 token 交给 shell 原生补全处理，避免影子缓冲对不上
+  const tokens = command.split(/\s+/);
+  if (tokens.length < 2) return null;
+  const token = tokens[tokens.length - 1];
+  if (!/[\\/]/.test(token) || /["']/.test(token)) return null;
+  const parsed = buildPathQuery(token, "", cwd);
+  return parsed ? { ...parsed, directoryOnly: false } : null;
+}
+
 function completionValue(entry: FileEntry, completion: PathCompletion) {
   const separator = Math.max(completion.typedPath.lastIndexOf("\\"), completion.typedPath.lastIndexOf("/"));
   const prefix = separator >= 0 ? completion.typedPath.slice(0, separator + 1) : "";
-  const value = `${prefix}${entry.name}\\`;
+  const value = `${prefix}${entry.name}${entry.isDirectory ? "\\" : ""}`;
   return `${completion.quote}${value}`;
 }
 
@@ -457,7 +472,7 @@ export default function TerminalPane({
       setCompletion(null);
       return;
     }
-    const parsed = parseCdPath(nextVal, cwdRef.current);
+    const parsed = parsePathArgument(nextVal, cwdRef.current);
     if (!parsed) {
       setCompletion(null);
       return;
@@ -465,10 +480,21 @@ export default function TerminalPane({
     void listDirectory(parsed.basePath)
       .then((items) => {
         if (requestId !== pathCompletionRequestRef.current) return;
-        const entries = items
-          .filter((entry) => entry.isDirectory && entry.name.toLowerCase().startsWith(parsed.namePart.toLowerCase()))
-          .slice(0, 8);
-        setCompletion(entries.length > 0 ? { basePath: parsed.basePath, typedPath: parsed.typedPath, quote: parsed.quote, entries } : null);
+        const namePrefix = parsed.namePart.toLowerCase();
+        const matching = items.filter((entry) =>
+          parsed.directoryOnly
+            ? entry.isDirectory && entry.name.toLowerCase().startsWith(namePrefix)
+            : entry.name.toLowerCase().startsWith(namePrefix),
+        );
+        matching.sort((a, b) =>
+          Number(b.isDirectory) - Number(a.isDirectory) || a.name.localeCompare(b.name),
+        );
+        const entries = matching.slice(0, 8);
+        setCompletion(
+          entries.length > 0
+            ? { basePath: parsed.basePath, typedPath: parsed.typedPath, quote: parsed.quote, directoryOnly: parsed.directoryOnly, entries }
+            : null,
+        );
       })
       .catch(() => {
         if (requestId === pathCompletionRequestRef.current) setCompletion(null);

@@ -436,6 +436,7 @@ Import-Module PSReadLine -ErrorAction SilentlyContinue
 if (Get-Module PSReadLine) {
     try { Set-PSReadLineOption -PredictionSource History -ErrorAction Stop } catch { }
     try { Set-PSReadLineOption -PredictionViewStyle InlineView -ErrorAction Stop } catch { }
+    try { Set-PSReadLineKeyHandler -Key Tab -Function MenuComplete -ErrorAction Stop } catch { }
     Set-PSReadLineKeyHandler -Key Enter -ScriptBlock {
         param($key, $arg)
         $line = ''
