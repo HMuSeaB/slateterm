@@ -34,29 +34,45 @@ jobs:
       - name: Set up Rust
         uses: dtolnay/rust-toolchain@stable
 
+      # 用表格打印整族版本，避免从 diff 的 name/version 对子里反推包名。
       - name: Show versions before
         shell: bash
         run: |
-          echo "### Cargo.lock before"
-          grep -A1 -E '^name = "(tauri|serde_with|rand|glib)"$' src-tauri/Cargo.lock \
-            | grep -E '^name|^version' | paste - - || true
+          cd src-tauri
+          report() {
+            echo "### $1"
+            for p in tauri tauri-runtime tauri-runtime-wry tauri-utils \
+                     tauri-macros tauri-codegen tauri-build wry tray-icon \
+                     serde_with rand glib; do
+              v=$(grep -A1 "^name = \"$p\"\$" Cargo.lock \
+                    | grep -m1 '^version = ' | cut -d'"' -f2)
+              printf '%-20s %s\n' "$p" "${v:-<absent>}"
+            done
+          }
+          report "resolved versions BEFORE"
 
       # 定向更新，不做全量 cargo update，避免顺带牵动无关依赖。
-      # glib 不在本次范围：它属于 GTK/WebKit 的 Linux 后端，
-      # windows-latest 构建不参与编译，且修复需跨大版本整套升级。
+      #
+      # tauri 的告警范围是 >=2.0.0, <=2.11.0，修复线 2.11.1；但这里直接往
+      # 2.12.1 走：2.11.x 对同族子 crate 用 caret 约束（tauri-runtime-wry ^2.11.1），
+      # 允许浮到 2.12 线，会解析出 tauri 2.11.1 配 tauri-runtime-wry 2.12.1 的
+      # 混代组合；2.12.1 改用 tilde 约束（~2.12.1 / ~2.10.1），整族锁在同一代。
+      #
+      # glib 不在本次范围：它属于 GTK/WebKit 的 Linux 后端，windows-latest
+      # 构建不参与编译，且 0.18 -> 0.20 需跨大版本整套 GTK 栈升级。
       - name: Update flagged crates to patched versions
         working-directory: src-tauri
         shell: bash
         run: |
           set -euo pipefail
-          cargo update -p tauri --precise 2.11.1
+          cargo update -p tauri --precise 2.12.1
           cargo update -p serde_with --precise 3.21.0
-          # rand 是 low 且修复线为 0.8.6，而图里另有被 ^0.7 锁死的 0.7.x；
-          # 前两步也可能已让 0.8.x 自动移位，因此这里只做尽力尝试。
+          # rand 是 low 且修复线为 0.8.6。tauri 升级后 rand 可能已整个离开依赖图，
+          # 也可能仍被 ^0.7 锁在 0.7.x，因此这里只做尽力尝试。
           if cargo update -p rand@0.8.5 --precise 0.8.6; then
             echo "rand 0.8.5 -> 0.8.6"
           else
-            echo "rand@0.8.5 已不在图中（可能被前两步带动），跳过"
+            echo "rand@0.8.5 已不在图中（可能被前两步带动或整个移除），跳过"
           fi
 
       - name: Verify resolved versions
@@ -71,19 +87,29 @@ jobs:
               exit 1
             fi
           }
-          expect tauri 2.11.1
+          expect tauri 2.12.1
           expect serde_with 3.21.0
-          echo "### rand versions now present (report only)"
-          grep -A1 '^name = "rand"$' src-tauri/Cargo.lock \
-            | grep -E '^name|^version' | paste - - || true
+
+      - name: Show versions after
+        shell: bash
+        run: |
+          cd src-tauri
+          echo "### resolved versions AFTER"
+          for p in tauri tauri-runtime tauri-runtime-wry tauri-utils \
+                   tauri-macros tauri-codegen tauri-build wry tray-icon \
+                   serde_with rand glib; do
+            v=$(grep -A1 "^name = \"$p\"\$" Cargo.lock \
+                  | grep -m1 '^version = ' | cut -d'"' -f2)
+            printf '%-20s %s\n' "$p" "${v:-<absent>}"
+          done
 
       - name: Show diff summary
         shell: bash
         run: |
           git --no-pager diff --stat -- src-tauri/Cargo.lock
-          echo "### changed name/version pairs"
-          git --no-pager diff -U1 -- src-tauri/Cargo.lock \
-            | grep -E '^[+-](name|version) =' | head -200 || true
+          echo "### added / removed crates"
+          git --no-pager diff -U0 -- src-tauri/Cargo.lock \
+            | grep -E '^[+-]name = ' | sed 's/^\(.\)name = /  \1 /' | sort -k1,1 | head -80 || true
 
       - name: Commit and push updated lockfile
         if: ${{ inputs.apply }}
@@ -97,5 +123,5 @@ jobs:
             echo "Cargo.lock is already up to date, nothing to commit"
             exit 0
           fi
-          git commit -m "更新 Rust 依赖到修复版：tauri 2.11.1、serde_with 3.21.0、rand 0.8.6"
+          git commit -m "更新 Rust 依赖：tauri 2.12.1、serde_with 3.21.0"
           git push origin HEAD:main
