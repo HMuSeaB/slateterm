@@ -18,3 +18,6 @@ src-tauri/target/
 *.keystore
 Thumbs.db
 .DS_Store
+
+# ZCode 会话纪要（wbmux 生成；含对话内容，不进版本库）
+会话纪要.md
