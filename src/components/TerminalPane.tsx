@@ -158,6 +158,11 @@ function themeForMode(theme: Settings["theme"]) {
       brightMagenta: "#ad5b87",
       brightCyan: "#2d918c",
       brightWhite: "#fffaf0",
+      // xterm 6 renders its own scrollbar slider; theming it here keeps the
+      // terminal scrollbar consistent with the rest of the shell.
+      scrollbarSliderBackground: "rgba(20, 95, 92, 0.24)",
+      scrollbarSliderHoverBackground: "rgba(20, 95, 92, 0.38)",
+      scrollbarSliderActiveBackground: "rgba(20, 95, 92, 0.5)",
     };
   }
 
@@ -183,6 +188,9 @@ function themeForMode(theme: Settings["theme"]) {
     brightMagenta: "#df97d0",
     brightCyan: "#78d7d1",
     brightWhite: "#fbfaf7",
+    scrollbarSliderBackground: "rgba(84, 181, 176, 0.18)",
+    scrollbarSliderHoverBackground: "rgba(84, 181, 176, 0.32)",
+    scrollbarSliderActiveBackground: "rgba(84, 181, 176, 0.5)",
   };
 }
 
