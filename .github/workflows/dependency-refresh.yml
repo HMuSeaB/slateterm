@@ -44,8 +44,9 @@ jobs:
             for p in tauri tauri-runtime tauri-runtime-wry tauri-utils \
                      tauri-macros tauri-codegen tauri-build wry tray-icon \
                      serde_with rand glib; do
+              # || true：包不在图里时 grep 返回 1，不能让 set -e 把整步带崩。
               v=$(grep -A1 "^name = \"$p\"\$" Cargo.lock \
-                    | grep -m1 '^version = ' | cut -d'"' -f2)
+                    | grep -m1 '^version = ' | cut -d'"' -f2 || true)
               printf '%-20s %s\n' "$p" "${v:-<absent>}"
             done
           }
@@ -99,7 +100,7 @@ jobs:
                    tauri-macros tauri-codegen tauri-build wry tray-icon \
                    serde_with rand glib; do
             v=$(grep -A1 "^name = \"$p\"\$" Cargo.lock \
-                  | grep -m1 '^version = ' | cut -d'"' -f2)
+                  | grep -m1 '^version = ' | cut -d'"' -f2 || true)
             printf '%-20s %s\n' "$p" "${v:-<absent>}"
           done
 
