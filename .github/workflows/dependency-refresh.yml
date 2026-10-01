@@ -1,0 +1,95 @@
+name: Refresh Rust dependencies
+
+# 只更新 Cargo.lock 里的版本号，不改动任何源码。
+# 目的：把被 advisory 标记的传递依赖换到已修复的版本。
+# 默认 dry run（apply=false）只打印结果与 diff；确认后再用 apply=true 落盘。
+
+on:
+  workflow_dispatch:
+    inputs:
+      apply:
+        description: Commit the updated Cargo.lock back to main
+        type: boolean
+        default: false
+
+permissions:
+  contents: write
+
+concurrency:
+  group: dependency-refresh
+  cancel-in-progress: false
+
+jobs:
+  refresh:
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+
+    steps:
+      - name: Check out main
+        uses: actions/checkout@v4
+        with:
+          ref: main
+          fetch-depth: 1
+
+      - name: Set up Rust
+        uses: dtolnay/rust-toolchain@stable
+
+      - name: Show versions before
+        shell: bash
+        run: |
+          echo "### Cargo.lock before"
+          grep -A1 -E '^name = "(tauri|serde_with|rand|glib)"$' src-tauri/Cargo.lock \
+            | grep -E '^name|^version' | paste - - || true
+
+      # 定向更新，不做全量 cargo update，避免顺带牵动无关依赖。
+      # glib 不在本次范围：它属于 GTK/WebKit 的 Linux 后端，
+      # windows-latest 构建不参与编译，且修复需跨大版本整套升级。
+      - name: Update flagged crates to patched versions
+        working-directory: src-tauri
+        shell: bash
+        run: |
+          set -euo pipefail
+          cargo update -p tauri --precise 2.11.1
+          cargo update -p serde_with --precise 3.21.0
+          cargo update -p rand@0.8.5 --precise 0.8.6
+
+      - name: Verify resolved versions
+        shell: bash
+        run: |
+          set -euo pipefail
+          expect() {
+            if grep -A1 "^name = \"$1\"\$" src-tauri/Cargo.lock | grep -q "version = \"$2\""; then
+              echo "ok: $1 $2"
+            else
+              echo "::error::expected $1 $2 in Cargo.lock"
+              exit 1
+            fi
+          }
+          expect tauri 2.11.1
+          expect serde_with 3.21.0
+          expect rand 0.8.6
+          echo "### Cargo.lock after"
+          grep -A1 -E '^name = "(tauri|serde_with|rand)"$' src-tauri/Cargo.lock \
+            | grep -E '^name|^version' | paste - -
+
+      - name: Show diff summary
+        shell: bash
+        run: |
+          git --no-pager diff --stat -- src-tauri/Cargo.lock
+          echo "### changed package versions"
+          git --no-pager diff -U0 -- src-tauri/Cargo.lock | grep -E '^[+-]version = ' | sort | uniq -c || true
+
+      - name: Commit and push updated lockfile
+        if: ${{ inputs.apply }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add -- src-tauri/Cargo.lock
+          if git diff --cached --quiet; then
+            echo "Cargo.lock is already up to date, nothing to commit"
+            exit 0
+          fi
+          git commit -m "更新 Rust 依赖到修复版：tauri 2.11.1、serde_with 3.21.0、rand 0.8.6"
+          git push origin HEAD:main
