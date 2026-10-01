@@ -1,7 +1,8 @@
-import { useEffect, useMemo, useRef, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import CommandPalette, { type PaletteCommand } from "./components/CommandPalette";
 import FilePreview from "./components/FilePreview";
 import HistoryPanel from "./components/HistoryPanel";
+import PaneErrorBoundary from "./components/PaneErrorBoundary";
 import SettingsPanel from "./components/SettingsPanel";
 import TabBar from "./components/TabBar";
 import TerminalPane from "./components/TerminalPane";
@@ -158,6 +159,20 @@ export default function App() {
   const [switcherAnchor, setSwitcherAnchor] = useState<{ x: number; y: number } | null>(null);
   const paneDeckRef = useRef<HTMLDivElement | null>(null);
   const dragStateRef = useRef<{ tabId: string } | null>(null);
+  // Latest-state mirrors read inside callbacks so handlers stay referentially
+  // stable without going stale between renders.
+  const tabsRef = useRef<Tab[]>([]);
+  const activeTabIdRef = useRef<string | null>(null);
+  const settingsRef = useRef<Settings>(settings);
+  const profilesRef = useRef<Profile[]>(profiles);
+  const selectedProfileIdRef = useRef<string>(selectedProfileId);
+  const activeNamedWorkspaceIdRef = useRef<string | null>(activeNamedWorkspaceId);
+  tabsRef.current = tabs;
+  activeTabIdRef.current = activeTabId;
+  settingsRef.current = settings;
+  profilesRef.current = profiles;
+  selectedProfileIdRef.current = selectedProfileId;
+  activeNamedWorkspaceIdRef.current = activeNamedWorkspaceId;
 
   const activeTab = tabs.find((tab) => tab.id === activeTabId) ?? null;
   const activePane = activeTab?.panes.find((pane) => pane.id === activeTab.activePaneId) ?? activeTab?.panes[0] ?? null;
@@ -318,12 +333,13 @@ export default function App() {
   }
 
   function snapshotWorkspace(): WorkspaceState | null {
-    if (tabs.length === 0) {
+    const currentTabs = tabsRef.current;
+    if (currentTabs.length === 0) {
       return null;
     }
     return {
-      activeTabIndex: Math.max(0, tabs.findIndex((tab) => tab.id === activeTabId)),
-      tabs: tabs.map((tab) => ({
+      activeTabIndex: Math.max(0, currentTabs.findIndex((tab) => tab.id === activeTabIdRef.current)),
+      tabs: currentTabs.map((tab) => ({
         profileId: tab.profileId,
         title: tab.title,
         panes: tab.panes.map((pane) => ({
@@ -342,7 +358,11 @@ export default function App() {
     if (!state) {
       return;
     }
-    const proposed = window.prompt("Workspace name", activeTab?.title || "My Workspace")?.trim();
+    const currentTabs = tabsRef.current;
+    const currentActiveTabId = activeTabIdRef.current;
+    const activeTabTitle =
+      currentTabs.find((tab) => tab.id === currentActiveTabId)?.title || "My Workspace";
+    const proposed = window.prompt("Workspace name", activeTabTitle)?.trim();
     if (!proposed) {
       return;
     }
@@ -359,25 +379,32 @@ export default function App() {
 
   async function loadNamedWorkspace(workspaceId: string) {
     setSwitcherAnchor(null);
-    const workspace = settings.namedWorkspaces?.find((item) => item.id === workspaceId);
-    if (!workspace || workspaceId === activeNamedWorkspaceId) {
+    const workspace = (settingsRef.current.namedWorkspaces || []).find(
+      (item) => item.id === workspaceId,
+    );
+    if (!workspace || workspaceId === activeNamedWorkspaceIdRef.current) {
       return;
     }
 
-    const sourceTabs = tabs;
+    const sourceTabs = tabsRef.current;
+    const leavingWorkspaceId = activeNamedWorkspaceIdRef.current;
     const leavingState = snapshotWorkspace();
-    const restored = await restoreWorkspaceSnapshot(workspace.state);
+    const restored = await restoreWorkspaceSnapshot(
+      workspace.state,
+      profilesRef.current,
+      settingsRef.current,
+    );
     if (!restored) {
       setBootError(`Could not open workspace: ${workspace.name}`);
       return;
     }
 
     // 离开前把当前布局写回源工作区，下次切回来时原样恢复
-    if (activeNamedWorkspaceId && leavingState) {
+    if (leavingWorkspaceId && leavingState) {
       setSettings((current) => ({
         ...current,
         namedWorkspaces: (current.namedWorkspaces || []).map((item) =>
-          item.id === activeNamedWorkspaceId
+          item.id === leavingWorkspaceId
             ? { ...item, state: leavingState, updatedAt: new Date().toISOString() }
             : item,
         ),
@@ -385,18 +412,20 @@ export default function App() {
     }
 
     await Promise.all(
-      sourceTabs.flatMap((tab) => tab.panes).map((pane) => closeSession(pane.sessionId).catch(() => undefined)),
+      sourceTabs
+        .flatMap((tab) => tab.panes)
+        .map((pane) => closeSession(pane.sessionId).catch(() => undefined)),
     );
     setActiveNamedWorkspaceId(workspaceId);
     setWorkspaceOpen(false);
   }
 
   function cycleNamedWorkspace(direction: 1 | -1) {
-    const workspaces = settings.namedWorkspaces || [];
+    const workspaces = settingsRef.current.namedWorkspaces || [];
     if (workspaces.length === 0) {
       return;
     }
-    const currentIndex = workspaces.findIndex((item) => item.id === activeNamedWorkspaceId);
+    const currentIndex = workspaces.findIndex((item) => item.id === activeNamedWorkspaceIdRef.current);
     const nextIndex = currentIndex < 0
       ? (direction === 1 ? 0 : workspaces.length - 1)
       : (currentIndex + direction + workspaces.length) % workspaces.length;
@@ -467,12 +496,12 @@ export default function App() {
     const onKeyDown = (event: KeyboardEvent) => {
       if (event.ctrlKey && event.key.toLowerCase() === "t") {
         event.preventDefault();
-        void openTab(selectedProfileId);
+        void openTab();
       }
 
-      if (event.ctrlKey && event.key.toLowerCase() === "w" && activeTabId) {
+      if (event.ctrlKey && event.key.toLowerCase() === "w" && activeTabIdRef.current) {
         event.preventDefault();
-        void closeTab(activeTabId);
+        void closeTab(activeTabIdRef.current);
       }
 
       if (event.ctrlKey && event.shiftKey && event.key.toLowerCase() === "d") {
@@ -511,9 +540,11 @@ export default function App() {
       }
     };
 
+    // Handlers read latest state through refs, so the listener never needs to
+    // be re-registered.
     window.addEventListener("keydown", onKeyDown, true);
     return () => window.removeEventListener("keydown", onKeyDown, true);
-  }, [activeTabId, selectedProfileId, settings.namedWorkspaces, activeNamedWorkspaceId, tabs, profiles]);
+  }, []);
 
   async function createTab(
     profileId: string,
@@ -593,11 +624,14 @@ export default function App() {
     setBootError(null);
   }
 
-  async function openTab(profileId = selectedProfileId, sourceProfiles = profiles, explicitCwd?: string | null) {
+  async function openTab(profileId = selectedProfileIdRef.current, sourceProfiles = profilesRef.current, explicitCwd?: string | null) {
     try {
-      const activePane = activeTab?.panes.find((pane) => pane.id === activeTab.activePaneId);
-      const targetCwd = explicitCwd ?? settings.workspaceRoot ?? activePane?.cwd ?? settings.lastCwd ?? null;
-      const { resolvedProfileId, nextTab } = await createTab(profileId, sourceProfiles, DEFAULT_STARTUP_LAYOUT, targetCwd, normalizeProxy(settings.proxy));
+      const currentSettings = settingsRef.current;
+      const currentTabs = tabsRef.current;
+      const currentActiveTab = currentTabs.find((tab) => tab.id === activeTabIdRef.current) ?? null;
+      const currentActivePane = currentActiveTab?.panes.find((pane) => pane.id === currentActiveTab.activePaneId);
+      const targetCwd = explicitCwd ?? currentSettings.workspaceRoot ?? currentActivePane?.cwd ?? currentSettings.lastCwd ?? null;
+      const { resolvedProfileId, nextTab } = await createTab(profileId, sourceProfiles, DEFAULT_STARTUP_LAYOUT, targetCwd, normalizeProxy(currentSettings.proxy));
 
       setTabs((current) => [...current, nextTab]);
       setActiveTabId(nextTab.id);
@@ -653,29 +687,32 @@ export default function App() {
   }
 
   async function splitActiveTab() {
-    if (!activeTab || activeTab.panes.length > 1) {
+    const currentTabs = tabsRef.current;
+    const currentActiveTab = currentTabs.find((tab) => tab.id === activeTabIdRef.current) ?? null;
+    if (!currentActiveTab || currentActiveTab.panes.length > 1) {
       return;
     }
 
     try {
-      const activePane = activeTab.panes.find((pane) => pane.id === activeTab.activePaneId);
-      const targetCwd = activePane?.cwd || settings.lastCwd || null;
-      const result = await createSession(activeTab.profileId, 120, 32, targetCwd, normalizeProxy(settings.proxy));
-      const profileName = profileLabel(activeTab.profileId, profiles);
+      const currentSettings = settingsRef.current;
+      const activePane = currentActiveTab.panes.find((pane) => pane.id === currentActiveTab.activePaneId);
+      const targetCwd = activePane?.cwd || currentSettings.lastCwd || null;
+      const result = await createSession(currentActiveTab.profileId, 120, 32, targetCwd, normalizeProxy(currentSettings.proxy));
+      const profileName = profileLabel(currentActiveTab.profileId, profilesRef.current);
       const nextPane: Pane = {
         id: makeId("pane"),
         sessionId: result.sessionId,
-        profileId: activeTab.profileId,
+        profileId: currentActiveTab.profileId,
         sizeRatio: 0.5,
         title: profileName,
         cwd: result.cwd || targetCwd || undefined,
-        runtimeMode: profiles.find((profile) => profile.id === activeTab.profileId)?.category === "ai" ? "claude" : "shell",
+        runtimeMode: profilesRef.current.find((profile) => profile.id === currentActiveTab.profileId)?.category === "ai" ? "claude" : "shell",
         sessionState: "running",
       };
 
       setTabs((current) =>
         current.map((tab) => {
-          if (tab.id !== activeTab.id) {
+          if (tab.id !== currentActiveTab.id) {
             return tab;
           }
           return {
@@ -692,7 +729,7 @@ export default function App() {
   }
 
   async function closePane(tabId: string, paneId: string) {
-    const tab = tabs.find((item) => item.id === tabId);
+    const tab = tabsRef.current.find((item) => item.id === tabId);
     const pane = tab?.panes.find((item) => item.id === paneId);
 
     if (!tab || !pane) {
@@ -708,24 +745,25 @@ export default function App() {
       return;
     }
 
-    setTabs((current) =>
-      current.map((item) => {
-        if (item.id !== tabId) {
-          return item;
-        }
+    // Functional update + optimistic ref mirror: two closes landing in the
+    // same tick compose instead of the second one clobbering the first.
+    const collapsePane = (item: Tab): Tab => {
+      if (item.id !== tabId) {
+        return item;
+      }
+      const remainingPane = item.panes.find((candidate) => candidate.id !== paneId);
+      if (!remainingPane) {
+        return item;
+      }
+      return {
+        ...item,
+        activePaneId: remainingPane.id,
+        panes: [{ ...remainingPane, sizeRatio: 1 }],
+      };
+    };
 
-        const remainingPane = item.panes.find((candidate) => candidate.id !== paneId);
-        if (!remainingPane) {
-          return item;
-        }
-
-        return {
-          ...item,
-          activePaneId: remainingPane.id,
-          panes: [{ ...remainingPane, sizeRatio: 1 }],
-        };
-      }),
-    );
+    tabsRef.current = tabsRef.current.map(collapsePane);
+    setTabs((current) => current.map(collapsePane));
   }
 
   function reorderTabs(draggedTabId: string, targetTabId: string, placement: "before" | "after") {
@@ -750,7 +788,7 @@ export default function App() {
   }
 
   async function closeTab(tabId: string, closeSessions = true) {
-    const targetTab = tabs.find((tab) => tab.id === tabId);
+    const targetTab = tabsRef.current.find((tab) => tab.id === tabId);
     if (!targetTab) {
       return;
     }
@@ -766,17 +804,34 @@ export default function App() {
       );
     }
 
-    const remainingTabs = tabs.filter((tab) => tab.id !== tabId);
-    const nextActiveTab = remainingTabs.length > 0 ? remainingTabs[remainingTabs.length - 1] : null;
-    setTabs(remainingTabs);
-    setActiveTabId(nextActiveTab?.id ?? null);
+    // Pick the neighbor from the pre-close snapshot, then delete functionally
+    // so concurrent closes in the same tick compose instead of clobbering.
+    const snapshot = tabsRef.current;
+    const closedIndex = snapshot.findIndex((tab) => tab.id === tabId);
+    if (closedIndex < 0) {
+      return;
+    }
+    const remaining = snapshot.filter((tab) => tab.id !== tabId);
+    const currentActiveId = activeTabIdRef.current;
+    const nextActiveTab =
+      currentActiveId && currentActiveId !== tabId && remaining.some((tab) => tab.id === currentActiveId)
+        ? null // active tab survives; the functional setActiveTabId keeps it
+        : remaining[Math.max(0, closedIndex - 1)] ?? remaining[remaining.length - 1] ?? null;
 
-    if (remainingTabs.length === 0) {
-      await openTab(selectedProfileId, profiles);
+    tabsRef.current = remaining;
+    setTabs((current) => current.filter((tab) => tab.id !== tabId));
+    setActiveTabId((activeId) =>
+      activeId && activeId !== tabId && remaining.some((tab) => tab.id === activeId)
+        ? activeId
+        : nextActiveTab?.id ?? null,
+    );
+
+    if (remaining.length === 0) {
+      await openTab(selectedProfileIdRef.current, profilesRef.current);
     }
   }
 
-  function updatePaneTitle(sessionId: string, nextTitle: string) {
+  const updatePaneTitle = useCallback((sessionId: string, nextTitle: string) => {
     const normalized = nextTitle.trim();
     if (!normalized) {
       return;
@@ -800,9 +855,9 @@ export default function App() {
         };
       }),
     );
-  }
+  }, []);
 
-  function updatePaneCwd(sessionId: string, nextCwd: string) {
+  const updatePaneCwd = useCallback((sessionId: string, nextCwd: string) => {
     const normalized = nextCwd.trim();
     if (!normalized) {
       return;
@@ -829,9 +884,9 @@ export default function App() {
         };
       }),
     );
-  }
+  }, []);
 
-  function updatePaneRuntime(sessionId: string, runtimeMode: Pane["runtimeMode"]) {
+  const updatePaneRuntime = useCallback((sessionId: string, runtimeMode: Pane["runtimeMode"]) => {
     setTabs((current) =>
       current.map((tab) => ({
         ...tab,
@@ -840,9 +895,9 @@ export default function App() {
         ),
       })),
     );
-  }
+  }, []);
 
-  function updatePaneSessionState(sessionId: string, sessionState: Pane["sessionState"]) {
+  const updatePaneSessionState = useCallback((sessionId: string, sessionState: Pane["sessionState"]) => {
     setTabs((current) =>
       current.map((tab) => ({
         ...tab,
@@ -851,24 +906,35 @@ export default function App() {
         ),
       })),
     );
-  }
+  }, []);
 
-  function focusPane(tabId: string, paneId: string) {
+  const focusPaneBySession = useCallback((sessionId: string) => {
+    const tab = tabsRef.current.find((item) => item.panes.some((pane) => pane.sessionId === sessionId));
+    const pane = tab?.panes.find((candidate) => candidate.sessionId === sessionId);
+    if (!tab || !pane) {
+      return;
+    }
     setTabs((current) =>
-      current.map((tab) =>
-        tab.id === tabId
-          ? {
-              ...tab,
-              activePaneId: paneId,
-            }
-          : tab,
+      current.map((item) =>
+        item.id === tab.id && item.activePaneId !== pane.id
+          ? { ...item, activePaneId: pane.id }
+          : item,
       ),
     );
-    setActiveTabId(tabId);
-  }
+    setActiveTabId(tab.id);
+  }, []);
+
+  const closePaneBySession = useCallback((sessionId: string) => {
+    const tab = tabsRef.current.find((item) => item.panes.some((pane) => pane.sessionId === sessionId));
+    const pane = tab?.panes.find((candidate) => candidate.sessionId === sessionId);
+    if (tab && pane) {
+      void closePane(tab.id, pane.id);
+    }
+  }, []);
 
   function runCommandFromHistory(command: string) {
-    const targetPane = activeTab?.panes.find((pane) => pane.id === activeTab.activePaneId);
+    const currentActiveTab = tabsRef.current.find((tab) => tab.id === activeTabIdRef.current) ?? null;
+    const targetPane = currentActiveTab?.panes.find((pane) => pane.id === currentActiveTab.activePaneId);
     if (!targetPane) {
       setBootError("Open a terminal before running a history command.");
       return;
@@ -876,7 +942,7 @@ export default function App() {
     setQueuedCommand({ id: makeId("command"), value: command, sessionId: targetPane.sessionId });
   }
 
-  const proxy = normalizeProxy(settings.proxy);
+  const proxy = useMemo(() => normalizeProxy(settings.proxy), [settings.proxy]);
   const activeWorkspace = (settings.namedWorkspaces || []).find((item) => item.id === activeNamedWorkspaceId) ?? null;
   const activeWorkspaceLabel =
     activeWorkspace?.name
@@ -885,7 +951,7 @@ export default function App() {
 
   const paletteCommands = useMemo<PaletteCommand[]>(() => {
     const base: PaletteCommand[] = [
-      { id: "new-tab", label: "New terminal tab", description: "Open the selected shell profile", shortcut: "Ctrl T", keywords: "shell terminal", run: () => void openTab(selectedProfileId) },
+      { id: "new-tab", label: "New terminal tab", description: "Open the selected shell profile", shortcut: "Ctrl T", keywords: "shell terminal", run: () => void openTab(selectedProfileIdRef.current) },
       { id: "split", label: "Split active pane", description: "Create a second terminal pane", shortcut: "Ctrl Shift D", run: () => void splitActiveTab() },
       { id: "save-workspace", label: "Save current workspace", description: "Store tabs, panes, and directories", keywords: "session layout", run: saveNamedWorkspace },
       { id: "switch-workspace", label: "Switch saved workspace…", description: "Pick from your saved workspaces", shortcut: "Ctrl Alt ←/→", keywords: "workspace switch session layout", run: () => setSwitcherAnchor({ x: Math.max(24, window.innerWidth / 2 - 130), y: 96 }) },
@@ -909,21 +975,14 @@ export default function App() {
       run: () => void loadNamedWorkspace(workspace.id),
     }));
     return [...base, ...profileCommands, ...workspaceCommands];
-  }, [profiles, selectedProfileId, settings.namedWorkspaces, workspaceOpen, activeTabId, tabs, proxy, activeNamedWorkspaceId]);
+  }, [profiles, settings.namedWorkspaces, workspaceOpen, proxy]);
 
-  const paneGridStyle =
-    activeTab && activeTab.panes.length === 2
-      ? {
-          gridTemplateColumns: `${activeTab.panes[0].sizeRatio}fr ${PANE_SPLITTER_WIDTH}px ${activeTab.panes[1].sizeRatio}fr`,
-        }
-      : undefined;
-
-  const fontDeltaHandler = (delta: number) => {
+  const fontDeltaHandler = useCallback((delta: number) => {
     setSettings((current) => ({
       ...current,
       fontSize: clampFontSize(current.fontSize + delta),
     }));
-  };
+  }, []);
 
   if (booting) {
     return <div className="boot-screen">Opening your default shell...</div>;
@@ -1004,55 +1063,80 @@ export default function App() {
                 </div>
               )}
 
-              {activeTab ? (
-                <div ref={paneDeckRef} className={`pane-deck panes-${activeTab.panes.length}`} style={paneGridStyle}>
-                  {activeTab.panes.map((pane, index) => (
-                    <div
-                      key={pane.id}
-                      className="pane-slot"
-                      style={
-                        activeTab.panes.length === 2
-                          ? { gridColumn: index === 0 ? 1 : 3, gridRow: 1 }
-                          : undefined
-                      }
-                    >
-                      <TerminalPane
-                        sessionId={pane.sessionId}
-                        settings={settings}
-                        profileCategory={profiles.find((profile) => profile.id === pane.profileId)?.category ?? "shell"}
-                        runtimeMode={pane.runtimeMode}
-                        paneTitle={pane.title ?? `Pane ${index + 1}`}
-                        cwd={pane.cwd}
-                        sessionState={pane.sessionState}
-                        active={activeTab.activePaneId === pane.id}
-                        canClose={activeTab.panes.length > 1}
-                        onActivate={() => focusPane(activeTab.id, pane.id)}
-                        onClose={() => void closePane(activeTab.id, pane.id)}
-                        onTitleChange={(title) => updatePaneTitle(pane.sessionId, title)}
-                        onCwdChange={(cwd) => updatePaneCwd(pane.sessionId, cwd)}
-                        onRuntimeModeChange={(mode) => updatePaneRuntime(pane.sessionId, mode)}
-                        onSessionStateChange={(state) => updatePaneSessionState(pane.sessionId, state)}
-                        onFontDelta={fontDeltaHandler}
-                        queuedCommand={queuedCommand}
-                      />
-                    </div>
-                  ))}
-
-                  {activeTab.panes.length === 2 && (
-                    <div
-                      className="splitter"
-                      style={{ gridColumn: 2, gridRow: 1 }}
-                      onMouseDown={() => {
-                        dragStateRef.current = { tabId: activeTab.id };
-                      }}
-                    />
-                  )}
-                </div>
-              ) : (
+              {tabs.length === 0 ? (
                 <div className="empty-state">
                   <strong>No AI terminal session is active.</strong>
                   <span>Open a workspace and start Claude Code, or create a shell tab.</span>
                 </div>
+              ) : (
+                // Every tab stays mounted; inactive ones are hidden with CSS so
+                // their xterm instances keep buffering output and scrollback.
+                tabs.map((tab) => {
+                  const isTabActive = tab.id === activeTabId;
+                  return (
+                    <div
+                      key={tab.id}
+                      ref={isTabActive ? paneDeckRef : null}
+                      className={`pane-deck panes-${tab.panes.length}`}
+                      style={{
+                        ...(tab.panes.length === 2
+                          ? {
+                              gridTemplateColumns: `${tab.panes[0].sizeRatio}fr ${PANE_SPLITTER_WIDTH}px ${tab.panes[1].sizeRatio}fr`,
+                            }
+                          : undefined),
+                        display: isTabActive ? undefined : "none",
+                      }}
+                    >
+                      {tab.panes.map((pane, index) => (
+                        <div
+                          key={pane.id}
+                          className="pane-slot"
+                          style={
+                            tab.panes.length === 2
+                              ? { gridColumn: index === 0 ? 1 : 3, gridRow: 1 }
+                              : undefined
+                          }
+                        >
+                          <PaneErrorBoundary
+                            key={`${pane.id}-${pane.sessionId}`}
+                            paneTitle={pane.title ?? `Pane ${index + 1}`}
+                            onClose={tab.panes.length > 1 ? () => closePaneBySession(pane.sessionId) : undefined}
+                          >
+                            <TerminalPane
+                              sessionId={pane.sessionId}
+                              settings={settings}
+                              profileCategory={profiles.find((profile) => profile.id === pane.profileId)?.category ?? "shell"}
+                              runtimeMode={pane.runtimeMode}
+                              paneTitle={pane.title ?? `Pane ${index + 1}`}
+                              cwd={pane.cwd}
+                              sessionState={pane.sessionState}
+                              active={isTabActive && tab.activePaneId === pane.id}
+                              canClose={tab.panes.length > 1}
+                              onActivate={focusPaneBySession}
+                              onClose={closePaneBySession}
+                              onTitleChange={updatePaneTitle}
+                              onCwdChange={updatePaneCwd}
+                              onRuntimeModeChange={updatePaneRuntime}
+                              onSessionStateChange={updatePaneSessionState}
+                              onFontDelta={fontDeltaHandler}
+                              queuedCommand={queuedCommand}
+                            />
+                          </PaneErrorBoundary>
+                        </div>
+                      ))}
+
+                      {tab.panes.length === 2 && (
+                        <div
+                          className="splitter"
+                          style={{ gridColumn: 2, gridRow: 1 }}
+                          onMouseDown={() => {
+                            dragStateRef.current = { tabId: tab.id };
+                          }}
+                        />
+                      )}
+                    </div>
+                  );
+                })
               )}
             </section>
           </section>

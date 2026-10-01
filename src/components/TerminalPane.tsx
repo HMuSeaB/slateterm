@@ -1,8 +1,9 @@
 import { listen } from "@tauri-apps/api/event";
-import { useEffect, useRef, useState } from "react";
+import { memo, useEffect, useRef, useState } from "react";
 import { FitAddon } from "@xterm/addon-fit";
 import { SearchAddon } from "@xterm/addon-search";
 import { WebLinksAddon } from "@xterm/addon-web-links";
+import { WebglAddon } from "@xterm/addon-webgl";
 import { Terminal } from "@xterm/xterm";
 import "@xterm/xterm/css/xterm.css";
 import { PathAttachmentChips } from "./PathAttachmentChips";
@@ -53,12 +54,14 @@ type Props = {
   sessionState: PaneSessionState;
   active: boolean;
   canClose?: boolean;
-  onActivate: () => void;
-  onClose?: () => void;
-  onTitleChange: (title: string) => void;
-  onCwdChange?: (cwd: string) => void;
-  onRuntimeModeChange?: (mode: PaneRuntimeMode) => void;
-  onSessionStateChange?: (state: PaneSessionState) => void;
+  // Callbacks are keyed by sessionId so App can pass stable references and
+  // memo() can actually skip re-renders.
+  onActivate: (sessionId: string) => void;
+  onClose?: (sessionId: string) => void;
+  onTitleChange: (sessionId: string, title: string) => void;
+  onCwdChange?: (sessionId: string, cwd: string) => void;
+  onRuntimeModeChange?: (sessionId: string, mode: PaneRuntimeMode) => void;
+  onSessionStateChange?: (sessionId: string, state: PaneSessionState) => void;
   onFontDelta: (delta: number) => void;
   queuedCommand?: { id: string; value: string; sessionId: string } | null;
 };
@@ -183,7 +186,7 @@ function themeForMode(theme: Settings["theme"]) {
   };
 }
 
-export default function TerminalPane({
+function TerminalPane({
   sessionId,
   settings,
   profileCategory,
@@ -229,6 +232,10 @@ export default function TerminalPane({
   const pathCompletionIndexRef = useRef(0);
   const pathCompletionRequestRef = useRef(0);
   const inputBufferRef = useRef("");
+  const inputFlushRef = useRef("");
+  const inputFlushTimerRef = useRef<number | null>(null);
+  const blockOutputBufferRef = useRef<Map<string, string>>(new Map());
+  const blockFlushTimerRef = useRef<number | null>(null);
   const pendingPathAttachmentsRef = useRef<PendingPathAttachment[]>([]);
   const cwdRef = useRef(cwd);
   const activeRef = useRef(active);
@@ -276,7 +283,79 @@ export default function TerminalPane({
   function setPaneRuntimeMode(mode: PaneRuntimeMode) {
     runtimeModeRef.current = mode;
     setRuntimeMode(mode);
-    onRuntimeModeChangeRef.current?.(mode);
+    onRuntimeModeChangeRef.current?.(sessionId, mode);
+  }
+
+  // Keystrokes are coalesced into one IPC write per ~10ms tick instead of one
+  // invoke per character; immediate sends keep ordered semantics for pastes
+  // and sequences that must land atomically.
+  function flushInputBuffer() {
+    if (inputFlushTimerRef.current !== null) {
+      window.clearTimeout(inputFlushTimerRef.current);
+      inputFlushTimerRef.current = null;
+    }
+    const buffered = inputFlushRef.current;
+    if (!buffered) {
+      return;
+    }
+    inputFlushRef.current = "";
+    void writeInput(sessionId, buffered);
+  }
+
+  function sendInput(data: string, immediate = false) {
+    inputFlushRef.current += data;
+    if (immediate || inputFlushRef.current.length >= 4096) {
+      flushInputBuffer();
+      return;
+    }
+    if (inputFlushTimerRef.current === null) {
+      inputFlushTimerRef.current = window.setTimeout(() => {
+        inputFlushTimerRef.current = null;
+        flushInputBuffer();
+      }, 10);
+    }
+  }
+
+  // Block "output" events accumulate in a ref and land in state on a ~100ms
+  // cadence so a chatty command does not re-render the pane per chunk.
+  function flushBlockOutputs() {
+    if (blockFlushTimerRef.current !== null) {
+      window.clearTimeout(blockFlushTimerRef.current);
+      blockFlushTimerRef.current = null;
+    }
+    const buffered = blockOutputBufferRef.current;
+    if (buffered.size === 0) {
+      return;
+    }
+    blockOutputBufferRef.current = new Map();
+    setCommandBlocks((current) =>
+      current.map((block) => {
+        const chunk = buffered.get(block.id);
+        if (!chunk || block.outputTruncated) {
+          return block;
+        }
+        const nextOutput = block.output + chunk;
+        if (nextOutput.length > MAX_COMMAND_BLOCK_OUTPUT) {
+          return {
+            ...block,
+            output: nextOutput.slice(0, MAX_COMMAND_BLOCK_OUTPUT),
+            outputTruncated: true,
+          };
+        }
+        return { ...block, output: nextOutput };
+      }),
+    );
+  }
+
+  function queueBlockOutput(blockId: string, chunk: string) {
+    const buffer = blockOutputBufferRef.current;
+    buffer.set(blockId, (buffer.get(blockId) || "") + chunk);
+    if (blockFlushTimerRef.current === null) {
+      blockFlushTimerRef.current = window.setTimeout(() => {
+        blockFlushTimerRef.current = null;
+        flushBlockOutputs();
+      }, 100);
+    }
   }
 
   function setSessionStatus(status: StatusBanner | null) {
@@ -362,7 +441,7 @@ export default function TerminalPane({
     }
     updateBuffer("");
     recordCommand(normalized);
-    void writeInput(sessionId, `${normalized}\r`);
+    sendInput(`${normalized}\r`, true);
     focusTerminal();
   }
 
@@ -416,14 +495,14 @@ export default function TerminalPane({
     const currentArgument = `${completion.quote}${completion.typedPath}`;
     const nextArgument = completionValue(entry, completion);
     const suffix = nextArgument.slice(currentArgument.length);
-    void writeInput(sessionId, suffix);
+    sendInput(suffix, true);
     updateBuffer(inputBufferRef.current + suffix);
     focusTerminal();
   }
 
   async function attachClipboardImageToClaude(message = "正在把图片附加给 Claude Code...") {
     setSessionStatus({ tone: "info", message });
-    await writeInput(sessionId, CLAUDE_IMAGE_ATTACH_SEQUENCE);
+    sendInput(CLAUDE_IMAGE_ATTACH_SEQUENCE, true);
     await new Promise((resolve) => window.setTimeout(resolve, 160));
   }
 
@@ -482,7 +561,7 @@ export default function TerminalPane({
     const formattedPaths = formatTerminalPaths(paths);
     setSessionStatus({ tone: "info", message: `已插入路径：${formattedPaths}` });
     updateBuffer(inputBufferRef.current + formattedPaths);
-    await writeInput(sessionId, formattedPaths);
+    sendInput(formattedPaths, true);
   }
 
   function handlePasteCapture(event: React.ClipboardEvent<HTMLDivElement>) {
@@ -514,7 +593,7 @@ export default function TerminalPane({
       if (text) {
         setSessionStatus(null);
         updateBuffer(inputBufferRef.current + text.replace(/[\x00-\x1F\x7F-\x9F]/g, ""));
-        await writeInput(sessionId, text);
+        sendInput(text, true);
       }
     })().catch((error) =>
       setSessionStatus({ tone: "error", message: `Paste failed: ${String(error)}` }),
@@ -525,6 +604,12 @@ export default function TerminalPane({
     const binding = bindingRef.current;
     const container = containerRef.current;
     if (!binding || !container) {
+      return;
+    }
+
+    // Hidden tabs (display:none) yield zero/garbage fit geometry; skip and
+    // wait for the ResizeObserver refit when the tab becomes visible.
+    if (container.offsetParent === null) {
       return;
     }
 
@@ -607,7 +692,7 @@ export default function TerminalPane({
       fontFamily: settings.fontFamily,
       fontSize: settings.fontSize,
       lineHeight: settings.lineHeight,
-      scrollback: 20000,
+      scrollback: 5000,
       theme: themeForMode(settings.theme),
       windowsPty: {
         backend: "conpty",
@@ -616,6 +701,10 @@ export default function TerminalPane({
     });
     const fitAddon = new FitAddon();
     const searchAddon = new SearchAddon();
+    const webglAddon = new WebglAddon();
+    webglAddon.onContextLoss(() => {
+      webglAddon.dispose();
+    });
     const webLinksAddon = new WebLinksAddon((event, uri) => {
       if (!event.ctrlKey) {
         setSessionStatus({ tone: "info", message: "Hold Ctrl and click to open links." });
@@ -628,6 +717,13 @@ export default function TerminalPane({
 
     terminal.loadAddon(fitAddon);
     terminal.loadAddon(searchAddon);
+    // GPU renderer with automatic fallback to the DOM renderer on context loss
+    // or when WebGL is unavailable.
+    try {
+      terminal.loadAddon(webglAddon);
+    } catch {
+      webglAddon.dispose();
+    }
     terminal.loadAddon(webLinksAddon);
     terminal.open(containerRef.current);
     bindingRef.current = {
@@ -646,7 +742,7 @@ export default function TerminalPane({
           pendingPathAttachmentsRef.current.map((attachment) => attachment.path),
         );
         const separator = inputBufferRef.current.trim() ? " " : "";
-        void writeInput(sessionId, `${separator}${attachmentText}\r`);
+        sendInput(`${separator}${attachmentText}\r`, true);
         clearPendingPathAttachments();
         updateBuffer("");
         return;
@@ -661,7 +757,7 @@ export default function TerminalPane({
         return;
       }
 
-      void writeInput(sessionId, data);
+      sendInput(data);
 
       if (data === "\r" || data === "\n") {
         // 只把 shell 会话的输入记进命令历史；Claude 对话内容不算命令
@@ -744,7 +840,7 @@ export default function TerminalPane({
             if (text) {
               setSessionStatus(null);
               updateBuffer(inputBufferRef.current + text.replace(/[\x00-\x1F\x7F-\x9F]/g, ""));
-              await writeInput(sessionId, text);
+              sendInput(text, true);
             }
           })
           .catch((error) => setSessionStatus({ tone: "error", message: `Paste failed: ${String(error)}` }));
@@ -762,14 +858,14 @@ export default function TerminalPane({
               const formatted = imagePath.includes(" ") ? `"${imagePath}"` : imagePath;
               setSessionStatus({ tone: "info", message: `Pasted clipboard image: ${formatted}` });
               updateBuffer(inputBufferRef.current + formatted);
-              await writeInput(sessionId, formatted);
+              sendInput(formatted, true);
               return;
             }
             const text = await readClipboardText();
             if (text) {
               setSessionStatus(null);
               updateBuffer(inputBufferRef.current + text.replace(/[\x00-\x1F\x7F-\x9F]/g, ""));
-              await writeInput(sessionId, text);
+              sendInput(text, true);
             }
           })
           .catch((error) => setSessionStatus({ tone: "error", message: `Paste failed: ${String(error)}` }));
@@ -805,16 +901,35 @@ export default function TerminalPane({
     return () => {
       dataDispose.dispose();
       resizeObserver.disconnect();
+      flushInputBuffer();
       if (fitRafRef.current !== null) {
         cancelAnimationFrame(fitRafRef.current);
         fitRafRef.current = null;
+      }
+      if (inputFlushTimerRef.current !== null) {
+        window.clearTimeout(inputFlushTimerRef.current);
+        inputFlushTimerRef.current = null;
+      }
+      if (blockFlushTimerRef.current !== null) {
+        window.clearTimeout(blockFlushTimerRef.current);
+        blockFlushTimerRef.current = null;
       }
       if (sessionStatusTimerRef.current !== null) {
         window.clearTimeout(sessionStatusTimerRef.current);
         sessionStatusTimerRef.current = null;
       }
-      bindingRef.current?.terminal.dispose();
+      const binding = bindingRef.current;
       bindingRef.current = null;
+      if (binding) {
+        // Renderer addons can fail while tearing down, for example right after a
+        // GPU context loss. A pane teardown must never escalate into a whole-app
+        // error screen, so the failure is contained and logged instead.
+        try {
+          binding.terminal.dispose();
+        } catch (error) {
+          console.warn("SlateTerm: terminal teardown failed", error);
+        }
+      }
     };
   }, [sessionId]);
 
@@ -835,6 +950,9 @@ export default function TerminalPane({
   useEffect(() => {
     if (active && !searchOpen) {
       focusTerminal();
+      // Inactive tabs render hidden; refit once the container is measurable
+      // again after a tab switch or pane focus change.
+      scheduleFit("activation");
     }
   }, [active, searchOpen]);
 
@@ -845,7 +963,7 @@ export default function TerminalPane({
     const command = `${queuedCommand.value}\r`;
     updateBuffer("");
     recordCommand(queuedCommand.value);
-    void writeInput(sessionId, command);
+    sendInput(command, true);
     focusTerminal();
   }, [active, queuedCommand?.id, sessionId]);
 
@@ -870,19 +988,21 @@ export default function TerminalPane({
   useEffect(() => {
     let mounted = true;
 
-    const unlistenOutput = listen<OutputEvent>("terminal/output", (event) => {
-      if (!mounted || event.payload.sessionId !== sessionId) {
+    // Per-session event channels: each pane only ever receives its own output,
+    // so there is no N-pane fan-out and filter.
+    const unlistenOutput = listen<OutputEvent>(`terminal/output/${sessionId}`, (event) => {
+      if (!mounted) {
         return;
       }
       clearTransientStatus();
       bindingRef.current?.terminal.write(event.payload.chunk);
     });
 
-    const unlistenExit = listen<ExitEvent>("terminal/exit", (event) => {
-      if (!mounted || event.payload.sessionId !== sessionId) {
+    const unlistenExit = listen<ExitEvent>(`terminal/exit/${sessionId}`, (event) => {
+      if (!mounted) {
         return;
       }
-      onSessionStateChangeRef.current?.("exited");
+      onSessionStateChangeRef.current?.(sessionId, "exited");
       setSessionStatus(
         event.payload.exitCode === 0
           ? { tone: "info", message: "Session ended cleanly." }
@@ -890,30 +1010,30 @@ export default function TerminalPane({
       );
     });
 
-    const unlistenError = listen<ErrorEvent>("terminal/error", (event) => {
-      if (!mounted || event.payload.sessionId !== sessionId) {
+    const unlistenError = listen<ErrorEvent>(`terminal/error/${sessionId}`, (event) => {
+      if (!mounted) {
         return;
       }
-      onSessionStateChangeRef.current?.("error");
+      onSessionStateChangeRef.current?.(sessionId, "error");
       setSessionStatus({ tone: "error", message: `Session error: ${event.payload.message}` });
     });
 
-    const unlistenTitle = listen<TitleEvent>("terminal/title", (event) => {
-      if (!mounted || event.payload.sessionId !== sessionId || !event.payload.title) {
+    const unlistenTitle = listen<TitleEvent>(`terminal/title/${sessionId}`, (event) => {
+      if (!mounted || !event.payload.title) {
         return;
       }
-      onTitleChangeRef.current(event.payload.title);
+      onTitleChangeRef.current(sessionId, event.payload.title);
     });
 
-    const unlistenCwd = listen<CwdEvent>("terminal/cwd", (event) => {
-      if (!mounted || event.payload.sessionId !== sessionId || !event.payload.cwd) {
+    const unlistenCwd = listen<CwdEvent>(`terminal/cwd/${sessionId}`, (event) => {
+      if (!mounted || !event.payload.cwd) {
         return;
       }
-      onCwdChangeRef.current?.(event.payload.cwd);
+      onCwdChangeRef.current?.(sessionId, event.payload.cwd);
     });
 
-    const unlistenBlock = listen<CommandBlockEvent>("terminal/block", (event) => {
-      if (!mounted || event.payload.sessionId !== sessionId) {
+    const unlistenBlock = listen<CommandBlockEvent>(`terminal/block/${sessionId}`, (event) => {
+      if (!mounted) {
         return;
       }
       const blockEvent = event.payload;
@@ -927,6 +1047,14 @@ export default function TerminalPane({
       ) {
         setPaneRuntimeMode("shell");
       }
+      // Landing phase changes are applied after any buffered output so the
+      // event order survives the throttling. Output chunks queue before any
+      // setState so the side effect stays out of the state updater.
+      if (blockEvent.phase === "output") {
+        queueBlockOutput(blockEvent.blockId, blockEvent.output ?? "");
+        return;
+      }
+      flushBlockOutputs();
       setCommandBlocks((current) => {
         if (blockEvent.phase === "started") {
           const next = [
@@ -945,20 +1073,6 @@ export default function TerminalPane({
         return current.map((block) => {
           if (block.id !== blockEvent.blockId) {
             return block;
-          }
-          if (blockEvent.phase === "output") {
-            if (block.outputTruncated) {
-              return block;
-            }
-            const nextOutput = block.output + (blockEvent.output ?? "");
-            if (nextOutput.length > MAX_COMMAND_BLOCK_OUTPUT) {
-              return {
-                ...block,
-                output: nextOutput.slice(0, MAX_COMMAND_BLOCK_OUTPUT),
-                outputTruncated: true,
-              };
-            }
-            return { ...block, output: nextOutput };
           }
           return {
             ...block,
@@ -986,7 +1100,7 @@ export default function TerminalPane({
     onDragEnter: setDragPaths,
     onDragOver: setIsDragging,
     onDrop: (paths) => {
-      onActivate();
+      onActivate(sessionId);
       void handleDroppedPaths(paths).catch((error) =>
         setSessionStatus({ tone: "error", message: `拖放失败：${String(error)}` }),
       );
@@ -1018,7 +1132,7 @@ export default function TerminalPane({
   return (
     <section
       className={`terminal-shell ${active ? "is-active" : ""}`}
-      onMouseDown={onActivate}
+      onMouseDown={() => onActivate(sessionId)}
       onPasteCapture={handlePasteCapture}
     >
       <header className="terminal-pane-header">
@@ -1039,7 +1153,7 @@ export default function TerminalPane({
           >
             Blocks <span>{commandBlocks.length}</span>
           </button>
-          {canClose && onClose && <button type="button" className="pane-header-close" aria-label={`Close ${paneTitle || "terminal pane"}`} onClick={onClose}>×</button>}
+          {canClose && onClose && <button type="button" className="pane-header-close" aria-label={`Close ${paneTitle || "terminal pane"}`} onClick={() => onClose(sessionId)}>×</button>}
         </div>
       </header>
 
@@ -1175,3 +1289,5 @@ export default function TerminalPane({
     </section>
   );
 }
+
+export default memo(TerminalPane);
