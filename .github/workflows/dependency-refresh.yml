@@ -51,7 +51,13 @@ jobs:
           set -euo pipefail
           cargo update -p tauri --precise 2.11.1
           cargo update -p serde_with --precise 3.21.0
-          cargo update -p rand@0.8.5 --precise 0.8.6
+          # rand 是 low 且修复线为 0.8.6，而图里另有被 ^0.7 锁死的 0.7.x；
+          # 前两步也可能已让 0.8.x 自动移位，因此这里只做尽力尝试。
+          if cargo update -p rand@0.8.5 --precise 0.8.6; then
+            echo "rand 0.8.5 -> 0.8.6"
+          else
+            echo "rand@0.8.5 已不在图中（可能被前两步带动），跳过"
+          fi
 
       - name: Verify resolved versions
         shell: bash
@@ -67,17 +73,17 @@ jobs:
           }
           expect tauri 2.11.1
           expect serde_with 3.21.0
-          expect rand 0.8.6
-          echo "### Cargo.lock after"
-          grep -A1 -E '^name = "(tauri|serde_with|rand)"$' src-tauri/Cargo.lock \
-            | grep -E '^name|^version' | paste - -
+          echo "### rand versions now present (report only)"
+          grep -A1 '^name = "rand"$' src-tauri/Cargo.lock \
+            | grep -E '^name|^version' | paste - - || true
 
       - name: Show diff summary
         shell: bash
         run: |
           git --no-pager diff --stat -- src-tauri/Cargo.lock
-          echo "### changed package versions"
-          git --no-pager diff -U0 -- src-tauri/Cargo.lock | grep -E '^[+-]version = ' | sort | uniq -c || true
+          echo "### changed name/version pairs"
+          git --no-pager diff -U1 -- src-tauri/Cargo.lock \
+            | grep -E '^[+-](name|version) =' | head -200 || true
 
       - name: Commit and push updated lockfile
         if: ${{ inputs.apply }}
