@@ -47,20 +47,23 @@ fn list_shell_profiles(state: State<AppState>) -> Vec<Profile> {
     state.shell_profiles.clone()
 }
 
+// Async commands run on the worker pool instead of the main thread, so the
+// folder dialog, filesystem walks, and clipboard retries below can never block
+// window message pumping or the pty hot path.
 #[tauri::command]
-fn load_settings(app: AppHandle) -> Result<Settings, String> {
+async fn load_settings(app: AppHandle) -> Result<Settings, String> {
     settings::load(&app)
 }
 
 #[tauri::command]
-fn save_settings(app: AppHandle, settings: Settings) -> Result<(), String> {
+async fn save_settings(app: AppHandle, settings: Settings) -> Result<(), String> {
     settings::save(&app, &settings)
 }
 
 #[tauri::command]
-fn create_session(
+async fn create_session(
     app: AppHandle,
-    state: State<AppState>,
+    state: State<'_, AppState>,
     profile_id: String,
     cols: u16,
     rows: u16,
@@ -73,13 +76,17 @@ fn create_session(
 }
 
 #[tauri::command]
-fn write_input(state: State<AppState>, session_id: String, data: String) -> Result<(), String> {
+async fn write_input(
+    state: State<'_, AppState>,
+    session_id: String,
+    data: String,
+) -> Result<(), String> {
     state.sessions.write_input(&session_id, &data)
 }
 
 #[tauri::command]
-fn resize_session(
-    state: State<AppState>,
+async fn resize_session(
+    state: State<'_, AppState>,
     session_id: String,
     cols: u16,
     rows: u16,
@@ -88,7 +95,7 @@ fn resize_session(
 }
 
 #[tauri::command]
-fn close_session(state: State<AppState>, session_id: String) -> Result<(), String> {
+async fn close_session(state: State<'_, AppState>, session_id: String) -> Result<(), String> {
     state.sessions.close_session(&session_id)
 }
 
@@ -102,7 +109,7 @@ fn temp_image_path(extension: &str) -> Result<std::path::PathBuf, String> {
 }
 
 #[tauri::command]
-fn save_temp_image(bytes: Vec<u8>, extension: Option<String>) -> Result<String, String> {
+async fn save_temp_image(bytes: Vec<u8>, extension: Option<String>) -> Result<String, String> {
     let extension = extension
         .as_deref()
         .filter(|value| matches!(*value, "png" | "jpg" | "jpeg" | "gif" | "webp" | "bmp"))
@@ -113,7 +120,7 @@ fn save_temp_image(bytes: Vec<u8>, extension: Option<String>) -> Result<String, 
 }
 
 #[tauri::command]
-fn read_image_file(path: String) -> Result<Vec<u8>, String> {
+async fn read_image_file(path: String) -> Result<Vec<u8>, String> {
     const MAX_IMAGE_FILE_BYTES: u64 = 64 * 1024 * 1024;
     let path = std::path::Path::new(&path);
     if !path.is_file() {
@@ -131,7 +138,7 @@ fn wide_null(value: &str) -> Vec<u16> {
 }
 
 #[tauri::command]
-fn select_workspace_folder() -> Result<Option<String>, String> {
+async fn select_workspace_folder() -> Result<Option<String>, String> {
     let title = wide_null("Choose a SlateTerm workspace folder");
     let mut display_name = [0u16; 260];
     let browse_info = BROWSEINFOW {
@@ -162,7 +169,7 @@ fn select_workspace_folder() -> Result<Option<String>, String> {
 }
 
 #[tauri::command]
-fn list_directory(path: String) -> Result<Vec<FileEntry>, String> {
+async fn list_directory(path: String) -> Result<Vec<FileEntry>, String> {
     let root = std::path::Path::new(&path);
     if !root.is_dir() {
         return Err("The requested path is not a directory".into());
@@ -193,7 +200,7 @@ fn list_directory(path: String) -> Result<Vec<FileEntry>, String> {
 }
 
 #[tauri::command]
-fn read_text_file(path: String) -> Result<FilePreview, String> {
+async fn read_text_file(path: String) -> Result<FilePreview, String> {
     const MAX_PREVIEW_BYTES: usize = 1024 * 1024;
     let file_path = std::path::Path::new(&path);
     if !file_path.is_file() {
@@ -236,7 +243,7 @@ fn shell_open(target: &str) -> Result<(), String> {
 }
 
 #[tauri::command]
-fn open_external_url(url: String) -> Result<(), String> {
+async fn open_external_url(url: String) -> Result<(), String> {
     if !(url.starts_with("http://") || url.starts_with("https://")) {
         return Err("Only http and https links can be opened".into());
     }
@@ -244,7 +251,7 @@ fn open_external_url(url: String) -> Result<(), String> {
 }
 
 #[tauri::command]
-fn reveal_in_file_explorer(path: String) -> Result<(), String> {
+async fn reveal_in_file_explorer(path: String) -> Result<(), String> {
     let path = std::path::Path::new(&path);
     if !path.exists() {
         return Err("The requested path does not exist".into());
@@ -425,13 +432,13 @@ fn set_clipboard_dib(dib: Vec<u8>) -> Result<(), String> {
 }
 
 #[tauri::command]
-fn write_clipboard_image_file(path: String) -> Result<(), String> {
+async fn write_clipboard_image_file(path: String) -> Result<(), String> {
     let dib = image_file_to_dib(std::path::Path::new(&path))?;
     set_clipboard_dib(dib)
 }
 
 #[tauri::command]
-fn read_clipboard_text() -> Result<String, String> {
+async fn read_clipboard_text() -> Result<String, String> {
     with_open_clipboard(|| unsafe {
         let handle = GetClipboardData(CF_UNICODETEXT as u32);
         if handle.is_null() {
@@ -458,7 +465,7 @@ fn png_clipboard_format() -> u32 {
 }
 
 #[tauri::command]
-fn clipboard_has_image() -> Result<bool, String> {
+async fn clipboard_has_image() -> Result<bool, String> {
     with_open_clipboard(|| unsafe {
         let png_format = png_clipboard_format();
         Ok(IsClipboardFormatAvailable(CF_DIBV5 as u32) != 0
@@ -468,7 +475,7 @@ fn clipboard_has_image() -> Result<bool, String> {
 }
 
 #[tauri::command]
-fn read_clipboard_image() -> Result<Option<String>, String> {
+async fn read_clipboard_image() -> Result<Option<String>, String> {
     with_open_clipboard(|| unsafe {
         let format = if IsClipboardFormatAvailable(CF_DIBV5 as u32) != 0 {
             CF_DIBV5 as u32
@@ -522,7 +529,7 @@ fn read_clipboard_image() -> Result<Option<String>, String> {
 }
 
 #[tauri::command]
-fn write_clipboard_text(text: String) -> Result<(), String> {
+async fn write_clipboard_text(text: String) -> Result<(), String> {
     let wide = wide_null(&text);
     let byte_len = wide.len() * std::mem::size_of::<u16>();
 

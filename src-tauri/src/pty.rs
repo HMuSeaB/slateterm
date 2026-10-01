@@ -2,17 +2,21 @@ use std::{
     collections::HashMap,
     io::{Read, Write},
     path::Path,
-    sync::{Arc, Mutex},
+    sync::{
+        atomic::{AtomicBool, Ordering},
+        Arc, Mutex,
+    },
     thread,
+    time::{Duration, Instant},
 };
 
 use portable_pty::{native_pty_system, CommandBuilder, MasterPty, PtySize};
 use tauri::{AppHandle, Emitter};
 use uuid::Uuid;
 use windows_sys::Win32::{
-    Foundation::{CloseHandle, HANDLE, WAIT_FAILED},
+    Foundation::{CloseHandle, HANDLE, WAIT_FAILED, WAIT_OBJECT_0},
     System::Threading::{
-        GetExitCodeProcess, OpenProcess, TerminateProcess, WaitForSingleObject, INFINITE,
+        GetExitCodeProcess, OpenProcess, TerminateProcess, WaitForSingleObject,
         PROCESS_QUERY_LIMITED_INFORMATION, PROCESS_TERMINATE,
     },
 };
@@ -22,6 +26,10 @@ use crate::models::{
     OutputEvent, ProxyConfig, TitleEvent,
 };
 
+/// Block-output events are merged on this interval instead of being emitted per
+/// reader chunk; the terminal itself still receives every byte immediately.
+const BLOCK_FLUSH_INTERVAL: Duration = Duration::from_millis(100);
+
 pub struct SessionManager {
     sessions: Arc<Mutex<HashMap<String, Session>>>,
 }
@@ -29,7 +37,8 @@ pub struct SessionManager {
 struct Session {
     pid: u32,
     master: Box<dyn MasterPty + Send>,
-    writer: Box<dyn Write + Send>,
+    writer: Arc<Mutex<Box<dyn Write + Send>>>,
+    stop_monitor: Arc<AtomicBool>,
 }
 
 impl SessionManager {
@@ -103,38 +112,144 @@ impl SessionManager {
         let writer = pair.master.take_writer().map_err(|err| err.to_string())?;
 
         let session_id = Uuid::new_v4().to_string();
+        let stop_monitor = Arc::new(AtomicBool::new(false));
+
+        // Register before the reader/monitor threads start so no event can be
+        // emitted for a session that is not in the map yet.
+        if let Err(error) = self.sessions.lock().map(|mut sessions| {
+            sessions.insert(
+                session_id.clone(),
+                Session {
+                    pid,
+                    master: pair.master,
+                    writer: Arc::new(Mutex::new(writer)),
+                    stop_monitor: Arc::clone(&stop_monitor),
+                },
+            );
+        }) {
+            drop(reader);
+            if pid != 0 {
+                let _ = terminate_pid(pid);
+            }
+            let _ = error;
+            return Err("Session manager lock poisoned".to_string());
+        }
+
         let reader_session_id = session_id.clone();
-        let monitor_session_id = session_id.clone();
         let app_for_reader = app.clone();
 
         thread::spawn(move || {
             let mut buffer = [0u8; 8192];
+            let mut byte_pending: Vec<u8> = Vec::with_capacity(16 * 1024);
             let mut parser = TerminalStreamParser::default();
+            let mut block_buffer: Vec<TerminalSignal> = Vec::new();
+            let mut last_block_flush = Instant::now();
+
+            fn feed_text(
+                app: &AppHandle,
+                session_id: &str,
+                parser: &mut TerminalStreamParser,
+                block_buffer: &mut Vec<TerminalSignal>,
+                text: &str,
+            ) {
+                let parsed = parser.push(text);
+                if !parsed.visible.is_empty() {
+                    emit_terminal_output(app, session_id, parsed.visible);
+                }
+                for signal in parsed.signals {
+                    if matches!(signal, TerminalSignal::BlockOutput { .. }) {
+                        block_buffer.push(signal);
+                    } else {
+                        flush_block_outputs(app, session_id, block_buffer);
+                        emit_terminal_signal(app, session_id, signal);
+                    }
+                }
+            }
+
             loop {
                 match reader.read(&mut buffer) {
                     Ok(0) => {
+                        if !byte_pending.is_empty() {
+                            let text = String::from_utf8_lossy(&byte_pending).into_owned();
+                            byte_pending.clear();
+                            feed_text(
+                                &app_for_reader,
+                                &reader_session_id,
+                                &mut parser,
+                                &mut block_buffer,
+                                &text,
+                            );
+                        }
+                        flush_block_outputs(&app_for_reader, &reader_session_id, &mut block_buffer);
                         if let Some(visible) = parser.finish() {
                             emit_terminal_output(&app_for_reader, &reader_session_id, visible);
                         }
                         break;
                     }
                     Ok(read) => {
-                        let chunk = String::from_utf8_lossy(&buffer[..read]);
-                        let parsed = parser.push(&chunk);
-                        if !parsed.visible.is_empty() {
-                            emit_terminal_output(
+                        byte_pending.extend_from_slice(&buffer[..read]);
+                        // Incremental UTF-8 decoding: only complete characters are
+                        // forwarded, so multi-byte characters split across reads
+                        // survive instead of turning into U+FFFD garbage.
+                        loop {
+                            match std::str::from_utf8(&byte_pending) {
+                                Ok(text) => {
+                                    feed_text(
+                                        &app_for_reader,
+                                        &reader_session_id,
+                                        &mut parser,
+                                        &mut block_buffer,
+                                        text,
+                                    );
+                                    byte_pending.clear();
+                                    break;
+                                }
+                                Err(error) => {
+                                    let valid = error.valid_up_to();
+                                    if valid > 0 {
+                                        let text = std::str::from_utf8(&byte_pending[..valid])
+                                            .expect("prefix validated by from_utf8");
+                                        feed_text(
+                                            &app_for_reader,
+                                            &reader_session_id,
+                                            &mut parser,
+                                            &mut block_buffer,
+                                            text,
+                                        );
+                                        byte_pending.drain(..valid);
+                                    }
+                                    if let Some(invalid_len) = error.error_len() {
+                                        feed_text(
+                                            &app_for_reader,
+                                            &reader_session_id,
+                                            &mut parser,
+                                            &mut block_buffer,
+                                            "\u{FFFD}",
+                                        );
+                                        byte_pending.drain(..invalid_len);
+                                        continue;
+                                    }
+                                    // Incomplete trailing sequence: keep the bytes and
+                                    // wait for the next read.
+                                    break;
+                                }
+                            }
+                        }
+                        if !block_buffer.is_empty()
+                            && last_block_flush.elapsed() >= BLOCK_FLUSH_INTERVAL
+                        {
+                            flush_block_outputs(
                                 &app_for_reader,
                                 &reader_session_id,
-                                parsed.visible,
+                                &mut block_buffer,
                             );
-                        }
-                        for signal in parsed.signals {
-                            emit_terminal_signal(&app_for_reader, &reader_session_id, signal);
+                            last_block_flush = Instant::now();
                         }
                     }
                     Err(err) => {
+                        flush_block_outputs(&app_for_reader, &reader_session_id, &mut block_buffer);
                         let _ = app_for_reader.emit(
-                            "terminal/error",
+                            &format!("terminal/error/{reader_session_id}"),
                             ErrorEvent {
                                 session_id: reader_session_id.clone(),
                                 message: format!("Terminal reader error: {err}"),
@@ -146,37 +261,29 @@ impl SessionManager {
             }
         });
 
-        self.sessions
-            .lock()
-            .map_err(|_| "Session manager lock poisoned".to_string())?
-            .insert(
-                session_id.clone(),
-                Session {
-                    pid,
-                    master: pair.master,
-                    writer,
-                },
-            );
-
         if pid != 0 {
             let app_for_exit = app.clone();
             let sessions_for_exit = Arc::clone(&self.sessions);
-            thread::spawn(move || match wait_for_exit(pid) {
-                Ok(code) => {
+            let monitor_session_id = session_id.clone();
+            let stop_for_monitor = Arc::clone(&stop_monitor);
+            thread::spawn(move || match wait_for_exit(pid, &stop_for_monitor) {
+                Ok(Some(code)) => {
                     if let Ok(mut sessions) = sessions_for_exit.lock() {
                         sessions.remove(&monitor_session_id);
                     }
                     let _ = app_for_exit.emit(
-                        "terminal/exit",
+                        &format!("terminal/exit/{monitor_session_id}"),
                         ExitEvent {
                             session_id: monitor_session_id.clone(),
                             exit_code: code,
                         },
                     );
                 }
+                // Session was closed explicitly; the monitor stops quietly.
+                Ok(None) => {}
                 Err(err) => {
                     let _ = app_for_exit.emit(
-                        "terminal/error",
+                        &format!("terminal/error/{monitor_session_id}"),
                         ErrorEvent {
                             session_id: monitor_session_id.clone(),
                             message: err,
@@ -193,19 +300,27 @@ impl SessionManager {
     }
 
     pub fn write_input(&self, session_id: &str, data: &str) -> Result<(), String> {
-        let mut sessions = self
-            .sessions
-            .lock()
-            .map_err(|_| "Session manager lock poisoned".to_string())?;
-        let session = sessions
-            .get_mut(session_id)
-            .ok_or_else(|| "Session not found".to_string())?;
+        // Only the map lookup happens under the shared lock; the write itself
+        // takes the per-session writer lock so one stalled child cannot freeze
+        // resize/close or any other session's keystrokes.
+        let writer = {
+            let sessions = self
+                .sessions
+                .lock()
+                .map_err(|_| "Session manager lock poisoned".to_string())?;
+            let session = sessions
+                .get(session_id)
+                .ok_or_else(|| "Session not found".to_string())?;
+            Arc::clone(&session.writer)
+        };
 
-        session
-            .writer
+        let mut writer = writer
+            .lock()
+            .map_err(|_| "Session writer lock poisoned".to_string())?;
+        writer
             .write_all(data.as_bytes())
             .map_err(|err| err.to_string())?;
-        session.writer.flush().map_err(|err| err.to_string())
+        writer.flush().map_err(|err| err.to_string())
     }
 
     pub fn resize_session(&self, session_id: &str, cols: u16, rows: u16) -> Result<(), String> {
@@ -238,10 +353,39 @@ impl SessionManager {
             return Ok(());
         };
 
+        // Stop the exit monitor before killing the child so it does not linger
+        // in an infinite wait for a session the user already dismissed.
+        session.stop_monitor.store(true, Ordering::Relaxed);
         if session.pid != 0 {
             terminate_pid(session.pid)?;
         }
         Ok(())
+    }
+}
+
+fn flush_block_outputs(app: &AppHandle, session_id: &str, buffer: &mut Vec<TerminalSignal>) {
+    if buffer.is_empty() {
+        return;
+    }
+
+    let mut merged: Vec<TerminalSignal> = Vec::new();
+    for signal in buffer.drain(..) {
+        match merged.last_mut() {
+            Some(TerminalSignal::BlockOutput {
+                block_id: previous_id,
+                chunk: previous_chunk,
+            }) if matches!(&signal, TerminalSignal::BlockOutput { block_id, .. } if block_id == previous_id) =>
+            {
+                if let TerminalSignal::BlockOutput { chunk, .. } = signal {
+                    previous_chunk.push_str(&chunk);
+                }
+            }
+            _ => merged.push(signal),
+        }
+    }
+
+    for signal in merged {
+        emit_terminal_signal(app, session_id, signal);
     }
 }
 
@@ -434,8 +578,10 @@ fn cwd_from_osc_uri(uri: &str) -> Option<String> {
 }
 
 fn emit_terminal_output(app: &AppHandle, session_id: &str, chunk: String) {
+    // Per-session event names: the frontend subscribes per pane, so output is
+    // never fanned out to every other pane just to be filtered there.
     let _ = app.emit(
-        "terminal/output",
+        &format!("terminal/output/{session_id}"),
         OutputEvent {
             session_id: session_id.to_string(),
             chunk,
@@ -447,7 +593,7 @@ fn emit_terminal_signal(app: &AppHandle, session_id: &str, signal: TerminalSigna
     match signal {
         TerminalSignal::Title(title) => {
             let _ = app.emit(
-                "terminal/title",
+                &format!("terminal/title/{session_id}"),
                 TitleEvent {
                     session_id: session_id.to_string(),
                     title: Some(title),
@@ -456,7 +602,7 @@ fn emit_terminal_signal(app: &AppHandle, session_id: &str, signal: TerminalSigna
         }
         TerminalSignal::Cwd(cwd) => {
             let _ = app.emit(
-                "terminal/cwd",
+                &format!("terminal/cwd/{session_id}"),
                 CwdEvent {
                     session_id: session_id.to_string(),
                     cwd,
@@ -469,7 +615,7 @@ fn emit_terminal_signal(app: &AppHandle, session_id: &str, signal: TerminalSigna
             cwd,
         } => {
             let _ = app.emit(
-                "terminal/block",
+                &format!("terminal/block/{session_id}"),
                 CommandBlockEvent {
                     session_id: session_id.to_string(),
                     block_id,
@@ -483,7 +629,7 @@ fn emit_terminal_signal(app: &AppHandle, session_id: &str, signal: TerminalSigna
         }
         TerminalSignal::BlockOutput { block_id, chunk } => {
             let _ = app.emit(
-                "terminal/block",
+                &format!("terminal/block/{session_id}"),
                 CommandBlockEvent {
                     session_id: session_id.to_string(),
                     block_id,
@@ -500,7 +646,7 @@ fn emit_terminal_signal(app: &AppHandle, session_id: &str, signal: TerminalSigna
             exit_code,
         } => {
             let _ = app.emit(
-                "terminal/block",
+                &format!("terminal/block/{session_id}"),
                 CommandBlockEvent {
                     session_id: session_id.to_string(),
                     block_id,
@@ -515,7 +661,7 @@ fn emit_terminal_signal(app: &AppHandle, session_id: &str, signal: TerminalSigna
     }
 }
 
-fn wait_for_exit(pid: u32) -> Result<i32, String> {
+fn wait_for_exit(pid: u32, stop: &AtomicBool) -> Result<Option<i32>, String> {
     unsafe {
         const SYNCHRONIZE_ACCESS: u32 = 0x00100000;
         let handle: HANDLE = OpenProcess(
@@ -527,10 +673,20 @@ fn wait_for_exit(pid: u32) -> Result<i32, String> {
             return Err(format!("Failed to monitor process {pid}"));
         }
 
-        let wait_result = WaitForSingleObject(handle, INFINITE);
-        if wait_result == WAIT_FAILED {
-            CloseHandle(handle);
-            return Err(format!("Failed while waiting on process {pid}"));
+        loop {
+            if stop.load(Ordering::Relaxed) {
+                CloseHandle(handle);
+                return Ok(None);
+            }
+            let wait_result = WaitForSingleObject(handle, 200);
+            if wait_result == WAIT_OBJECT_0 {
+                break;
+            }
+            if wait_result == WAIT_FAILED {
+                CloseHandle(handle);
+                return Err(format!("Failed while waiting on process {pid}"));
+            }
+            // WAIT_TIMEOUT: poll the stop flag again.
         }
 
         let mut exit_code = 0u32;
@@ -540,7 +696,7 @@ fn wait_for_exit(pid: u32) -> Result<i32, String> {
         }
 
         CloseHandle(handle);
-        Ok(exit_code as i32)
+        Ok(Some(exit_code as i32))
     }
 }
 
