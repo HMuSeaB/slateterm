@@ -13,6 +13,7 @@ SlateTerm is a local-first, workspace-aware AI terminal for Windows. It keeps th
 - Claude Code sessions with visible runtime state and workspace CWD
 - PowerShell 7 and Command Prompt as first-class local shells
 - Native-feeling tabs, split panes, project context, image attachments, search, copy/paste, and local settings
+- Optional completion chime for Claude replies and local remote attach for a second terminal
 
 ## Stack
 
@@ -34,6 +35,7 @@ Highlights:
 - Persistent Shell/Claude status in tabs and the active workspace context bar
 - Native-feeling tabs, split panes, named workspaces, command palette, and local settings persistence
 - PowerShell Shell Integration for structured command blocks, CWD tracking, and exit status
+- Completion chime driven by Claude Code's title state, plus remote attach into a live Claude session
 
 ## What Works Today
 
@@ -53,6 +55,8 @@ Highlights:
 - Read each pane's runtime, session status, title, and working directory from a compact persistent pane header
 - Use consistent keyboard-dismissable command, history, settings, and file-preview overlays
 - Persist theme, font, cursor, and startup shell settings locally
+- Play a short chime when a Claude Code reply finishes (toggleable, off in the command palette or settings)
+- Share a running Claude session with another local terminal through `slateterm-attach`
 - Launch, continue, or resume `Claude Code` when it is installed on the machine
 
 ## Deliberate Non-Goals For This MVP
@@ -62,6 +66,53 @@ Highlights:
 - No cloud-hosted AI runtime; SlateTerm integrates local AI terminal tools instead
 - No plugin system
 - No cross-platform scope yet
+
+## Completion Chime
+
+SlateTerm plays a two-note chime when a Claude Code reply finishes, so you can look
+away while waiting. It only fires for Claude panes, never for plain shells.
+
+Claude Code signals "working" through its rotating terminal-title glyph and returns to
+a stable `✳` when idle, so SlateTerm watches the title and waits for that glyph to
+settle. It also listens for the terminal bell as a second trigger, which Claude Code
+emits when configured to:
+
+```bash
+claude config set --global preferredNotifChannel terminal_bell
+```
+
+Turn it off with the `Play a chime when Claude Code finishes a reply` checkbox in
+settings, or the `Mute Claude completion chime` command in the command palette.
+
+## Remote Attach
+
+Remote attach lets a second terminal window on the same PC watch and type into a
+running Claude session — for example the terminal that UU Remote opens for you.
+
+```bash
+cd src-tauri
+cargo build --bin slateterm-attach
+```
+
+`pnpm tauri dev` builds the app binary but not the client, so build the client at
+least once. A `pnpm build:attach` shortcut does the same thing. Then open
+**Settings → Remote attach**, switch it on, and copy the command it shows. Paste that
+command into the other terminal:
+
+```powershell
+& 'C:\...\target\debug\slateterm-attach.exe'
+```
+
+With more than one Claude session open it lists them numbered; otherwise it connects
+straight away. `Ctrl+]` detaches, and the SlateTerm pane keeps running untouched.
+`Ctrl+C` is passed through to Claude rather than detached.
+
+Only panes running a Claude runtime are shareable — plain PowerShell and `cmd`
+panes are never exposed. The pipe is created with a DACL limited to your Windows
+account and network clients are rejected, and each enable uses a fresh pipe name and
+random token written to `%LOCALAPPDATA%\SlateTerm\remote.json`, which is deleted on
+disable. Remote attach is off by default. Any process running as the same user can
+still inject input while it is enabled, so keep it off unless you are using it.
 
 ## Development
 
@@ -97,11 +148,22 @@ Build the frontend bundle:
 pnpm build
 ```
 
+Build the remote attach client (needed before remote attach works in a dev run):
+
+```bash
+pnpm build:attach
+```
+
 Build the desktop application:
 
 ```bash
 pnpm tauri build
 ```
+
+Bundling is currently switched off (`bundle.active` is `false` in
+`src-tauri/tauri.conf.json`). When it is switched back on, `slateterm-attach` has to
+be shipped as a sidecar through `bundle.externalBin`, otherwise release installs
+have no client and the settings panel will say so. That wire-up is not done yet.
 
 ## Repository Notes
 

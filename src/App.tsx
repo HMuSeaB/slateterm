@@ -17,12 +17,14 @@ import {
   readTextFile,
   saveSettings,
   selectWorkspaceFolder,
+  setRemoteEnabled,
 } from "./lib/tauri";
 import type {
   FilePreview as FilePreviewData,
   Pane,
   Profile,
   ProxySettings,
+  RemoteStatus,
   Settings,
   StartupLayout,
   Tab,
@@ -46,6 +48,8 @@ const DEFAULT_SETTINGS: Settings = {
   workspaceRoot: null,
   namedWorkspaces: [],
   proxy: { enabled: false, host: "127.0.0.1", port: 7890 },
+  completionSound: true,
+  remoteAttach: false,
 };
 
 const PANE_SPLITTER_WIDTH = 10;
@@ -111,6 +115,8 @@ function normalizeSettings(candidate: Settings): Settings {
     savedState: candidate.savedState || null,
     namedWorkspaces: Array.isArray(candidate.namedWorkspaces) ? candidate.namedWorkspaces : [],
     proxy: normalizeProxy(candidate.proxy),
+    completionSound: candidate.completionSound !== false,
+    remoteAttach: candidate.remoteAttach === true,
   };
 }
 
@@ -157,6 +163,8 @@ export default function App() {
   const [bootError, setBootError] = useState<string | null>(null);
   const [activeNamedWorkspaceId, setActiveNamedWorkspaceId] = useState<string | null>(null);
   const [switcherAnchor, setSwitcherAnchor] = useState<{ x: number; y: number } | null>(null);
+  const [remoteState, setRemoteState] = useState<RemoteStatus>({ enabled: false });
+  const [remoteError, setRemoteError] = useState<string | null>(null);
   const paneDeckRef = useRef<HTMLDivElement | null>(null);
   const dragStateRef = useRef<{ tabId: string } | null>(null);
   // Latest-state mirrors read inside callbacks so handlers stay referentially
@@ -442,6 +450,10 @@ export default function App() {
     });
   }
 
+  function toggleRemoteAttach() {
+    setSettings((current) => ({ ...current, remoteAttach: !current.remoteAttach }));
+  }
+
   function deleteNamedWorkspace(workspaceId: string) {
     setSettings((current) => ({
       ...current,
@@ -451,6 +463,29 @@ export default function App() {
       setActiveNamedWorkspaceId(null);
     }
   }
+
+  // 设置里的开关是事实源，后端管道跟着它开关；启动时也按上次的设置恢复
+  useEffect(() => {
+    if (booting) {
+      return;
+    }
+    let cancelled = false;
+    const wanted = settings.remoteAttach === true;
+    void setRemoteEnabled(wanted)
+      .then((status) => {
+        if (cancelled) return;
+        setRemoteState(status);
+        setRemoteError(null);
+      })
+      .catch((error) => {
+        if (cancelled) return;
+        setRemoteState({ enabled: false });
+        setRemoteError(String(error));
+      });
+    return () => {
+      cancelled = true;
+    };
+  }, [booting, settings.remoteAttach]);
 
   useEffect(() => {
     const onMouseMove = (event: MouseEvent) => {
@@ -956,6 +991,8 @@ export default function App() {
       { id: "save-workspace", label: "Save current workspace", description: "Store tabs, panes, and directories", keywords: "session layout", run: saveNamedWorkspace },
       { id: "switch-workspace", label: "Switch saved workspace…", description: "Pick from your saved workspaces", shortcut: "Ctrl Alt ←/→", keywords: "workspace switch session layout", run: () => setSwitcherAnchor({ x: Math.max(24, window.innerWidth / 2 - 130), y: 96 }) },
       { id: "toggle-proxy", label: proxy.enabled ? "Disable local proxy" : "Enable local proxy", description: `${proxyTargetLabel(proxy)} · applies to new sessions`, shortcut: "Ctrl Alt P", keywords: "proxy network http clash direct", run: toggleProxy },
+      { id: "toggle-chime", label: settings.completionSound !== false ? "Mute Claude completion chime" : "Enable Claude completion chime", description: "Sound when Claude Code finishes a reply", keywords: "sound bell notify chime mute 提示音", run: () => setSettings((current) => ({ ...current, completionSound: current.completionSound === false })) },
+      { id: "toggle-remote", label: settings.remoteAttach ? "Disable remote attach" : "Enable remote attach", description: "Let slateterm-attach in another terminal join Claude sessions", keywords: "remote attach uu 远程 pipe", run: toggleRemoteAttach },
       { id: "history", label: "Open command history", description: "Search, copy, or rerun commands", shortcut: "Ctrl Shift R", run: () => setHistoryOpen(true) },
       { id: "sidebar", label: workspaceOpen ? "Hide workspace sidebar" : "Show workspace sidebar", description: "Toggle workspace and tab navigation", shortcut: "Ctrl B", run: () => setWorkspaceOpen((current) => !current) },
       { id: "settings", label: "Open settings", description: "Theme, font, cursor, and startup shell", shortcut: "Ctrl ,", run: () => setSettingsOpen(true) },
@@ -975,7 +1012,7 @@ export default function App() {
       run: () => void loadNamedWorkspace(workspace.id),
     }));
     return [...base, ...profileCommands, ...workspaceCommands];
-  }, [profiles, settings.namedWorkspaces, workspaceOpen, proxy]);
+  }, [profiles, settings.namedWorkspaces, settings.completionSound, settings.remoteAttach, workspaceOpen, proxy]);
 
   const fontDeltaHandler = useCallback((delta: number) => {
     setSettings((current) => ({
@@ -1176,6 +1213,8 @@ export default function App() {
         profiles={profiles}
         settings={settings}
         open={settingsOpen}
+        remoteStatus={remoteState}
+        remoteError={remoteError}
         onClose={() => setSettingsOpen(false)}
         onChange={setSettings}
       />

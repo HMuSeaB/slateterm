@@ -25,6 +25,7 @@ use crate::models::{
     default_profiles, CommandBlockEvent, CreateSessionResponse, CwdEvent, ErrorEvent, ExitEvent,
     OutputEvent, ProxyConfig, TitleEvent,
 };
+use crate::remote::RemoteHub;
 
 /// Block-output events are merged on this interval instead of being emitted per
 /// reader chunk; the terminal itself still receives every byte immediately.
@@ -32,6 +33,7 @@ const BLOCK_FLUSH_INTERVAL: Duration = Duration::from_millis(100);
 
 pub struct SessionManager {
     sessions: Arc<Mutex<HashMap<String, Session>>>,
+    remote: Arc<RemoteHub>,
 }
 
 struct Session {
@@ -42,9 +44,10 @@ struct Session {
 }
 
 impl SessionManager {
-    pub fn new() -> Self {
+    pub fn new(remote: Arc<RemoteHub>) -> Self {
         Self {
             sessions: Arc::new(Mutex::new(HashMap::new())),
+            remote,
         }
     }
 
@@ -113,6 +116,15 @@ impl SessionManager {
 
         let session_id = Uuid::new_v4().to_string();
         let stop_monitor = Arc::new(AtomicBool::new(false));
+        let writer: Arc<Mutex<Box<dyn Write + Send>>> = Arc::new(Mutex::new(writer));
+        // 远程镜像与本地共用同一个 writer 锁，两边的按键按到达顺序写入
+        self.remote.register(
+            &session_id,
+            Arc::clone(&writer),
+            cols,
+            rows,
+            resolved_cwd.clone(),
+        );
 
         // Register before the reader/monitor threads start so no event can be
         // emitted for a session that is not in the map yet.
@@ -122,11 +134,12 @@ impl SessionManager {
                 Session {
                     pid,
                     master: pair.master,
-                    writer: Arc::new(Mutex::new(writer)),
+                    writer,
                     stop_monitor: Arc::clone(&stop_monitor),
                 },
             );
         }) {
+            self.remote.unregister(&session_id);
             drop(reader);
             if pid != 0 {
                 let _ = terminate_pid(pid);
@@ -137,6 +150,7 @@ impl SessionManager {
 
         let reader_session_id = session_id.clone();
         let app_for_reader = app.clone();
+        let remote_for_reader = Arc::clone(&self.remote);
 
         thread::spawn(move || {
             let mut buffer = [0u8; 8192];
@@ -144,9 +158,11 @@ impl SessionManager {
             let mut parser = TerminalStreamParser::default();
             let mut block_buffer: Vec<TerminalSignal> = Vec::new();
             let mut last_block_flush = Instant::now();
+            let remote = remote_for_reader;
 
             fn feed_text(
                 app: &AppHandle,
+                remote: &RemoteHub,
                 session_id: &str,
                 parser: &mut TerminalStreamParser,
                 block_buffer: &mut Vec<TerminalSignal>,
@@ -154,9 +170,15 @@ impl SessionManager {
             ) {
                 let parsed = parser.push(text);
                 if !parsed.visible.is_empty() {
+                    remote.record_output(session_id, &parsed.visible);
                     emit_terminal_output(app, session_id, parsed.visible);
                 }
                 for signal in parsed.signals {
+                    match &signal {
+                        TerminalSignal::Title(title) => remote.record_title(session_id, title),
+                        TerminalSignal::Cwd(cwd) => remote.record_cwd(session_id, cwd),
+                        _ => {}
+                    }
                     if matches!(signal, TerminalSignal::BlockOutput { .. }) {
                         block_buffer.push(signal);
                     } else {
@@ -174,6 +196,7 @@ impl SessionManager {
                             byte_pending.clear();
                             feed_text(
                                 &app_for_reader,
+                                &remote,
                                 &reader_session_id,
                                 &mut parser,
                                 &mut block_buffer,
@@ -182,6 +205,7 @@ impl SessionManager {
                         }
                         flush_block_outputs(&app_for_reader, &reader_session_id, &mut block_buffer);
                         if let Some(visible) = parser.finish() {
+                            remote.record_output(&reader_session_id, &visible);
                             emit_terminal_output(&app_for_reader, &reader_session_id, visible);
                         }
                         break;
@@ -196,6 +220,7 @@ impl SessionManager {
                                 Ok(text) => {
                                     feed_text(
                                         &app_for_reader,
+                                        &remote,
                                         &reader_session_id,
                                         &mut parser,
                                         &mut block_buffer,
@@ -211,6 +236,7 @@ impl SessionManager {
                                             .expect("prefix validated by from_utf8");
                                         feed_text(
                                             &app_for_reader,
+                                            &remote,
                                             &reader_session_id,
                                             &mut parser,
                                             &mut block_buffer,
@@ -221,6 +247,7 @@ impl SessionManager {
                                     if let Some(invalid_len) = error.error_len() {
                                         feed_text(
                                             &app_for_reader,
+                                            &remote,
                                             &reader_session_id,
                                             &mut parser,
                                             &mut block_buffer,
@@ -264,6 +291,7 @@ impl SessionManager {
         if pid != 0 {
             let app_for_exit = app.clone();
             let sessions_for_exit = Arc::clone(&self.sessions);
+            let remote_for_exit = Arc::clone(&self.remote);
             let monitor_session_id = session_id.clone();
             let stop_for_monitor = Arc::clone(&stop_monitor);
             thread::spawn(move || match wait_for_exit(pid, &stop_for_monitor) {
@@ -271,6 +299,7 @@ impl SessionManager {
                     if let Ok(mut sessions) = sessions_for_exit.lock() {
                         sessions.remove(&monitor_session_id);
                     }
+                    remote_for_exit.unregister(&monitor_session_id);
                     let _ = app_for_exit.emit(
                         &format!("terminal/exit/{monitor_session_id}"),
                         ExitEvent {
@@ -340,7 +369,10 @@ impl SessionManager {
                 pixel_width: 0,
                 pixel_height: 0,
             })
-            .map_err(|err| err.to_string())
+            .map_err(|err| err.to_string())?;
+        drop(sessions);
+        self.remote.record_resize(session_id, cols, rows);
+        Ok(())
     }
 
     pub fn close_session(&self, session_id: &str) -> Result<(), String> {
@@ -352,6 +384,7 @@ impl SessionManager {
         else {
             return Ok(());
         };
+        self.remote.unregister(session_id);
 
         // Stop the exit monitor before killing the child so it does not linger
         // in an infinite wait for a session the user already dismissed.
@@ -479,7 +512,10 @@ impl TerminalStreamParser {
     }
 
     fn handle_osc(&mut self, content: &str, parsed: &mut ParsedTerminalChunk) -> bool {
-        if let Some(title) = content.strip_prefix("0;") {
+        if let Some(title) = content
+            .strip_prefix("0;")
+            .or_else(|| content.strip_prefix("2;"))
+        {
             let title = title.trim();
             if !title.is_empty() {
                 parsed

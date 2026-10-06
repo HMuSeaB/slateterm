@@ -65,6 +65,8 @@ export type Settings = {
   savedState?: WorkspaceState | null;
   namedWorkspaces?: NamedWorkspace[];
   proxy?: ProxySettings;
+  completionSound?: boolean;
+  remoteAttach?: boolean;
 };
 
 export type PaneRuntimeMode = "shell" | "claude";
@@ -149,4 +151,17 @@ export type CommandBlock = {
 export type ErrorEvent = {
   sessionId: string;
   message: string;
+};
+
+export type RemoteStatus = {
+  enabled: boolean;
+  pipe?: string | null;
+  attachCommand?: string | null;
+  clientReady?: boolean;
+  clientPath?: string | null;
+};
+
+export type RemoteClientsEvent = {
+  sessionId: string;
+  clients: number;
 };

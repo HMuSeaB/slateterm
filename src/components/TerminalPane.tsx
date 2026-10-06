@@ -9,6 +9,7 @@ import "@xterm/xterm/css/xterm.css";
 import { PathAttachmentChips } from "./PathAttachmentChips";
 import { DropOverlay } from "./DropOverlay";
 import { recordCommand } from "../lib/completionEngine";
+import { createClaudeIdleWatcher, playCompletionChime } from "../lib/notify";
 import { detectedImageExtension, imageBlobToPngBytes, imageMimeType } from "../lib/imageBytes";
 import {
   createPathAttachment,
@@ -25,6 +26,7 @@ import {
   readImageFile,
   resizeSession,
   saveTempImage,
+  setRemoteShareable,
   writeClipboardImageFile,
   writeClipboardText,
   writeInput,
@@ -40,6 +42,7 @@ import type {
   OutputEvent,
   PaneRuntimeMode,
   PaneSessionState,
+  RemoteClientsEvent,
   Settings,
   TitleEvent,
 } from "../lib/types";
@@ -236,6 +239,7 @@ function TerminalPane({
   const [isDragging, setIsDragging] = useState(false);
   const [dragPaths, setDragPaths] = useState<string[]>([]);
   const [runtimeMode, setRuntimeMode] = useState<PaneRuntimeMode>(persistedRuntimeMode);
+  const [remoteClients, setRemoteClients] = useState(0);
   const pathCompletionRef = useRef<PathCompletion | null>(null);
   const pathCompletionIndexRef = useRef(0);
   const pathCompletionRequestRef = useRef(0);
@@ -250,6 +254,25 @@ function TerminalPane({
   const profileCategoryRef = useRef(profileCategory);
   const runtimeModeRef = useRef<PaneRuntimeMode>(persistedRuntimeMode);
   const sessionStatusTimerRef = useRef<number | null>(null);
+  const completionSoundRef = useRef(settings.completionSound !== false);
+
+  useEffect(() => {
+    completionSoundRef.current = settings.completionSound !== false;
+  }, [settings.completionSound]);
+
+  function notifyClaudeFinished() {
+    if (completionSoundRef.current && isClaudeRuntime()) {
+      playCompletionChime();
+    }
+  }
+
+  // 只有 Claude 会话允许远程 attach；切回普通 shell 时后端会把它从列表里拿掉
+  const remoteShareable = profileCategory === "ai" || runtimeMode === "claude";
+  useEffect(() => {
+    void setRemoteShareable(sessionId, remoteShareable).catch((error) =>
+      console.warn("SlateTerm: could not update remote sharing", error),
+    );
+  }, [sessionId, remoteShareable]);
 
   useEffect(() => {
     onFontDeltaRef.current = onFontDelta;
@@ -572,6 +595,22 @@ function TerminalPane({
     sendInput(formattedPaths, true);
   }
 
+  // 文本粘贴走 xterm 自己的流程：换行统一成 \r，应用开了 bracketed paste
+  // （Claude Code 等）时整段包起来。直接写原始 \r\n 的话，ConPTY 会把 \n
+  // 当成 Ctrl+Enter，PSReadLine 执行 InsertLineAbove，多行粘贴就倒过来了。
+  function pasteText(text: string) {
+    setSessionStatus(null);
+    const terminal = bindingRef.current?.terminal;
+    if (!terminal) {
+      sendInput(text.replace(/\r?\n/g, "\r"), true);
+      return;
+    }
+    // 粘贴内容经 onData 进入同一个输入缓冲，先把之前的按键冲掉保证顺序
+    flushInputBuffer();
+    terminal.paste(text);
+    flushInputBuffer();
+  }
+
   function handlePasteCapture(event: React.ClipboardEvent<HTMLDivElement>) {
     const eventText = event.clipboardData.getData("text/plain");
     const imageFile = Array.from(event.clipboardData.items)
@@ -599,9 +638,7 @@ function TerminalPane({
       }
       const text = eventText || (await readClipboardText());
       if (text) {
-        setSessionStatus(null);
-        updateBuffer(inputBufferRef.current + text.replace(/[\x00-\x1F\x7F-\x9F]/g, ""));
-        sendInput(text, true);
+        pasteText(text);
       }
     })().catch((error) =>
       setSessionStatus({ tone: "error", message: `Paste failed: ${String(error)}` }),
@@ -742,6 +779,9 @@ function TerminalPane({
       lastRows: 0,
     };
 
+    // Claude Code 设了 preferredNotifChannel=terminal_bell 时会在回复结束发 BEL
+    const bellDispose = terminal.onBell(() => notifyClaudeFinished());
+
     const dataDispose = terminal.onData((data) => {
       clearTransientStatus();
 
@@ -846,9 +886,7 @@ function TerminalPane({
             }
             const text = await readClipboardText();
             if (text) {
-              setSessionStatus(null);
-              updateBuffer(inputBufferRef.current + text.replace(/[\x00-\x1F\x7F-\x9F]/g, ""));
-              sendInput(text, true);
+              pasteText(text);
             }
           })
           .catch((error) => setSessionStatus({ tone: "error", message: `Paste failed: ${String(error)}` }));
@@ -871,9 +909,7 @@ function TerminalPane({
             }
             const text = await readClipboardText();
             if (text) {
-              setSessionStatus(null);
-              updateBuffer(inputBufferRef.current + text.replace(/[\x00-\x1F\x7F-\x9F]/g, ""));
-              sendInput(text, true);
+              pasteText(text);
             }
           })
           .catch((error) => setSessionStatus({ tone: "error", message: `Paste failed: ${String(error)}` }));
@@ -907,6 +943,7 @@ function TerminalPane({
     terminal.focus();
 
     return () => {
+      bellDispose.dispose();
       dataDispose.dispose();
       resizeObserver.disconnect();
       flushInputBuffer();
@@ -995,6 +1032,7 @@ function TerminalPane({
 
   useEffect(() => {
     let mounted = true;
+    const idleWatcher = createClaudeIdleWatcher(notifyClaudeFinished);
 
     // Per-session event channels: each pane only ever receives its own output,
     // so there is no N-pane fan-out and filter.
@@ -1030,6 +1068,7 @@ function TerminalPane({
       if (!mounted || !event.payload.title) {
         return;
       }
+      idleWatcher.handleTitle(event.payload.title);
       onTitleChangeRef.current(sessionId, event.payload.title);
     });
 
@@ -1091,8 +1130,16 @@ function TerminalPane({
       });
     });
 
+    const unlistenRemote = listen<RemoteClientsEvent>(`remote/clients/${sessionId}`, (event) => {
+      if (mounted) {
+        setRemoteClients(event.payload.clients);
+      }
+    });
+
     return () => {
       mounted = false;
+      idleWatcher.dispose();
+      void unlistenRemote.then((fn) => fn());
       void unlistenOutput.then((fn) => fn());
       void unlistenExit.then((fn) => fn());
       void unlistenError.then((fn) => fn());
@@ -1148,6 +1195,11 @@ function TerminalPane({
           <span className={`terminal-runtime-indicator is-${runtimeMode}`} aria-hidden="true" />
           <strong>{runtimeMode === "claude" ? "Claude" : "Shell"}</strong>
           <span className={`terminal-session-state is-${sessionState}`}>{sessionState}</span>
+          {remoteClients > 0 && (
+            <span className="terminal-remote-badge" title="有远程终端通过 slateterm-attach 连着这个会话，那边的输入会直接进入这里">
+              Remote {remoteClients}
+            </span>
+          )}
           <span className="terminal-pane-title" title={paneTitle}>{paneTitle || "Terminal"}</span>
           {cwd && <span className="terminal-pane-cwd" title={cwd}>{cwd}</span>}
         </div>

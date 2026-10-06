@@ -5,6 +5,7 @@ import type {
   FilePreview,
   Profile,
   ProxySettings,
+  RemoteStatus,
   Settings,
 } from "./types";
 
@@ -62,6 +63,18 @@ export async function resizeSession(sessionId: string, cols: number, rows: numbe
 
 export async function closeSession(sessionId: string) {
   return invoke<void>("close_session", { sessionId });
+}
+
+export async function remoteStatus() {
+  return invoke<RemoteStatus>("remote_status");
+}
+
+export async function setRemoteEnabled(enabled: boolean) {
+  return invoke<RemoteStatus>("set_remote_enabled", { enabled });
+}
+
+export async function setRemoteShareable(sessionId: string, shareable: boolean) {
+  return invoke<void>("set_remote_shareable", { sessionId, shareable });
 }
 
 export async function saveTempImage(bytes: Uint8Array, extension?: string) {

@@ -2211,6 +2211,113 @@ button {
   font-size: 10px;
 }
 
+.settings-remote-command {
+  display: grid;
+  gap: 4px;
+  margin-top: 10px;
+}
+
+.settings-remote-command span {
+  color: #74838b;
+  font-size: 10px;
+}
+
+.settings-remote-command code {
+  padding: 6px 8px;
+  border-radius: 6px;
+  background: rgba(0, 0, 0, 0.28);
+  font-family: "JetBrainsMono Nerd Font", "Cascadia Mono", Consolas, monospace;
+  font-size: 11px;
+  overflow-wrap: anywhere;
+  user-select: all;
+}
+
+.theme-paper .settings-remote-command code {
+  background: rgba(63, 54, 42, 0.08);
+}
+
+.settings-remote-error {
+  margin: 8px 0 0;
+  color: #ef6b61;
+  font-size: 11px;
+}
+
+.settings-remote-hint {
+  display: grid;
+  gap: 8px;
+  margin-top: 8px;
+}
+
+.settings-remote-hint ol {
+  margin: 0;
+  padding-left: 18px;
+  color: #8d9aa2;
+  font-size: 11px;
+  line-height: 1.55;
+}
+
+.settings-remote-hint ol kbd {
+  padding: 0 4px;
+  border: 1px solid rgba(255, 255, 255, 0.16);
+  border-radius: 4px;
+  font-family: inherit;
+  font-size: 10px;
+  background: rgba(255, 255, 255, 0.06);
+}
+
+.settings-remote-copy {
+  justify-self: start;
+  padding: 5px 10px;
+  border: 1px solid rgba(84, 181, 176, 0.32);
+  border-radius: 8px;
+  color: #dff7f4;
+  font-size: 11px;
+  background: rgba(84, 181, 176, 0.13);
+}
+
+.settings-remote-copy:hover {
+  border-color: rgba(84, 181, 176, 0.5);
+  background: rgba(84, 181, 176, 0.2);
+}
+
+.theme-paper .settings-remote-copy {
+  color: #145f5c;
+  border-color: rgba(20, 95, 92, 0.32);
+  background: rgba(20, 95, 92, 0.1);
+}
+
+.settings-remote-warning {
+  display: grid;
+  gap: 6px;
+  margin: 0;
+  color: #e0b562;
+  font-size: 11px;
+  line-height: 1.5;
+}
+
+.settings-remote-warning code {
+  padding: 5px 8px;
+  border-radius: 6px;
+  font-family: "JetBrainsMono Nerd Font", "Cascadia Mono", Consolas, monospace;
+  font-size: 11px;
+  overflow-wrap: anywhere;
+  background: rgba(224, 181, 98, 0.12);
+}
+
+.theme-paper .settings-remote-warning {
+  color: #8a5a12;
+}
+
+.terminal-remote-badge {
+  padding: 1px 6px;
+  border-radius: 999px;
+  border: 1px solid rgba(108, 160, 220, 0.45);
+  color: #87b9f0;
+  font-size: 9px;
+  letter-spacing: 0.04em;
+  text-transform: uppercase;
+}
+
 .boot-screen,
 .empty-state,
 .fatal-screen {

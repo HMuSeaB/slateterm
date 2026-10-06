@@ -12,6 +12,7 @@
     "dev": "vite",
     "build": "tsc && vite build",
     "build:desktop": "tauri build",
+    "build:attach": "cargo build --manifest-path src-tauri/Cargo.toml --bin slateterm-attach",
     "preview": "vite preview",
     "tauri": "tauri"
   },

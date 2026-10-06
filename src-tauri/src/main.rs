@@ -2,6 +2,8 @@
 
 mod models;
 mod pty;
+mod remote;
+mod remote_protocol;
 mod settings;
 
 use models::{
@@ -9,7 +11,8 @@ use models::{
     ProxyConfig, Settings,
 };
 use pty::SessionManager;
-use std::{ptr, thread, time::Duration};
+use remote::{RemoteHub, RemoteStatus};
+use std::{ptr, sync::Arc, thread, time::Duration};
 use tauri::{AppHandle, Manager, State};
 use windows_sys::Win32::{
     Foundation::GlobalFree,
@@ -33,6 +36,7 @@ use windows_sys::Win32::{
 
 struct AppState {
     sessions: SessionManager,
+    remote: Arc<RemoteHub>,
     profiles: Vec<Profile>,
     shell_profiles: Vec<Profile>,
 }
@@ -97,6 +101,30 @@ async fn resize_session(
 #[tauri::command]
 async fn close_session(state: State<'_, AppState>, session_id: String) -> Result<(), String> {
     state.sessions.close_session(&session_id)
+}
+
+#[tauri::command]
+async fn remote_status(state: State<'_, AppState>) -> Result<RemoteStatus, String> {
+    Ok(state.remote.status())
+}
+
+#[tauri::command]
+async fn set_remote_enabled(state: State<'_, AppState>, enabled: bool) -> Result<RemoteStatus, String> {
+    if enabled {
+        state.remote.enable()
+    } else {
+        Ok(state.remote.disable())
+    }
+}
+
+#[tauri::command]
+async fn set_remote_shareable(
+    state: State<'_, AppState>,
+    session_id: String,
+    shareable: bool,
+) -> Result<(), String> {
+    state.remote.set_shareable(&session_id, shareable);
+    Ok(())
 }
 
 fn temp_image_path(extension: &str) -> Result<std::path::PathBuf, String> {
@@ -567,13 +595,17 @@ fn main() {
     let shell_profiles = shell_profiles();
     let profiles = default_profiles();
 
+    let remote = Arc::new(RemoteHub::new());
+
     let app = tauri::Builder::default()
         .manage(AppState {
-            sessions: SessionManager::new(),
+            sessions: SessionManager::new(Arc::clone(&remote)),
+            remote,
             profiles,
             shell_profiles,
         })
         .setup(|app| {
+            app.state::<AppState>().remote.set_app(app.handle().clone());
             if let Some(window) = app.get_webview_window("main") {
                 if let Some(icon) = app.default_window_icon().cloned() {
                     if let Err(error) = window.set_icon(icon) {
@@ -602,6 +634,9 @@ fn main() {
             write_input,
             resize_session,
             close_session,
+            remote_status,
+            set_remote_enabled,
+            set_remote_shareable,
             save_temp_image,
             read_image_file,
             open_external_url,

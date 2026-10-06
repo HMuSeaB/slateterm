@@ -158,6 +158,8 @@ pub struct Settings {
     pub saved_state: Option<WorkspaceState>,
     pub named_workspaces: Vec<NamedWorkspace>,
     pub proxy: ProxyConfig,
+    pub completion_sound: bool,
+    pub remote_attach: bool,
 }
 
 impl Default for Settings {
@@ -176,6 +178,8 @@ impl Default for Settings {
             saved_state: None,
             named_workspaces: Vec::new(),
             proxy: ProxyConfig::default(),
+            completion_sound: true,
+            remote_attach: false,
         }
     }
 }
