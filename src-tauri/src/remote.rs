@@ -111,7 +111,10 @@ pub struct RemoteHub {
 }
 
 fn status_of(pipe: Option<&String>) -> RemoteStatus {
-    let client = attach_client_path();
+    // 首次读取状态时就把客户端准备好：同目录已有就直接用，否则从内嵌字节
+    // 释放一份到 LOCALAPPDATA。这样设置面板一打开就是可用状态，不会让用户
+    // 看到「找不到客户端」再去手动折腾。
+    let client = ensure_attach_client().or_else(attach_client_path);
     RemoteStatus {
         enabled: pipe.is_some(),
         attach_command: pipe.map(|_| attach_command_hint(&client)),
@@ -121,13 +124,66 @@ fn status_of(pipe: Option<&String>) -> RemoteStatus {
     }
 }
 
-/// 只认应用同目录下的 slateterm-attach.exe。装在 PATH 里的同名 exe 可能是别的
-/// 东西，拿它当命令给用户不放心。
+/// 客户端 eof 的存放位置。优先应用同目录（dev 构建与老版本布局），其次
+/// `%LOCALAPPDATA%\SlateTerm\slateterm-attach.exe`（内嵌释放的位置）。
 fn attach_client_path() -> Option<PathBuf> {
-    std::env::current_exe()
+    if let Some(beside) = std::env::current_exe()
         .ok()
-        .and_then(|exe| exe.parent().map(|dir| dir.join("slateterm-attach.exe")))
+        .and_then(|exe| exe.parent().map(|dir| dir.join(ATTACH_CLIENT_FILE)))
         .filter(|path| path.is_file())
+    {
+        return Some(beside);
+    }
+    released_client_path().filter(|path| path.is_file())
+}
+
+/// 释放出来的客户端文件名带 app 版本号。否则用户升级后 `%LOCALAPPDATA%` 里
+/// 还是上一版释放的旧客户端，会一直在用旧行为。带版本号则每次升级都是新路径，
+/// 旧文件留在原处无害，也不需要清理逻辑。
+fn released_client_path() -> Option<PathBuf> {
+    let version = env!("CARGO_PKG_VERSION");
+    std::env::var_os("LOCALAPPDATA")
+        .map(PathBuf::from)
+        .map(|base| base.join("SlateTerm").join(format!("slateterm-attach-{version}.exe")))
+}
+
+const ATTACH_CLIENT_FILE: &str = "slateterm-attach.exe";
+
+/// 内嵌的客户端字节。build.rs 编译主程序时若已在 `target/<profile>/` 找到客户端，
+/// 就生成一个含 `include_bytes!` 的模块交给这里内嵌，发布版因此只需分发一个
+/// exe；找不到客户端时 build.rs 生成空片段，主程序退回「应用同目录查找」的
+/// 老行为，dev 与老布局都不受影响。
+///
+/// 用 `include!` 拉整个模块而不是在表达式里 `include_bytes!`：后者只接受字面量，
+/// 喂不了编译期算出来的路径。由 build.rs 把路径写死进生成的源码，同时避开同一
+/// crate 两个 bin 编译顺序不确定的问题——客户端没编出来时是空字节而非构建失败。
+mod embedded_client {
+    include!(concat!(env!("OUT_DIR"), "/attach_client_bytes.rs"));
+}
+const ATTACH_CLIENT_BYTES: &[u8] = embedded_client::ATTACH_CLIENT_BYTES;
+
+/// 把内嵌的客户端写到 `%LOCALAPPDATA%\SlateTerm\` 并返回其路径。
+///
+/// 为什么不在 build.rs 里 `include_bytes!`：Cargo 不保证同一个 crate 里两个
+/// bin 的编译顺序，主程序构建时客户端可能还没编出来，构建会直接失败。运行时
+/// 释放没有这个依赖，代价仅是首次开启时写一个小文件。
+///
+/// 已存在则直接复用，不重复写；写失败只是降级为「不可用」，由调用方呈现提示，
+/// 不影响 remote 的其他部分。
+fn ensure_attach_client() -> Option<PathBuf> {
+    // 没有内嵌字节（dev 首次构建、或客户端从未编过）时不写文件，否则会留下一个
+    // 0 字节的假客户端，之后每次都被当成「已就绪」。
+    if ATTACH_CLIENT_BYTES.is_empty() {
+        return None;
+    }
+    let target = released_client_path()?;
+    if target.is_file() {
+        return Some(target);
+    }
+    let parent = target.parent()?;
+    std::fs::create_dir_all(parent).ok()?;
+    std::fs::write(&target, ATTACH_CLIENT_BYTES).ok()?;
+    Some(target)
 }
 
 fn attach_command_hint(client: &Option<PathBuf>) -> String {

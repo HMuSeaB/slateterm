@@ -94,12 +94,13 @@ command palette entry **Remote attach 使用说明** to get a copyable command. 
 that into the other terminal:
 
 ```powershell
-& 'C:\...\target\debug\slateterm-attach.exe'
+& "$env:LOCALAPPDATA\SlateTerm\slateterm-attach-1.1.0.exe"
 ```
 
-Nothing extra to build in development: `cargo build` compiles every target in the
-crate by default, so `pnpm tauri dev` produces `slateterm-attach.exe` next to the
-app binary on its own.
+The first time you switch remote attach on, SlateTerm writes that executable out of
+itself into `%LOCALAPPDATA%\SlateTerm\` — the download is a single file, and nothing
+needs to be built or unpacked. The file name carries the app version, so an upgrade
+starts from a fresh copy instead of reusing whatever the previous version released.
 
 With more than one Claude session open it lists them numbered; otherwise it connects
 straight away. `Ctrl+]` detaches, and the SlateTerm pane keeps running untouched.
@@ -109,22 +110,32 @@ Claude Code runs on the alternate screen, and the Windows console keeps no scrol
 for it, so the remote window cannot scroll back through history — use the SlateTerm
 pane for that. Typing works normally.
 
-## Why there are two executables
+Step-by-step instructions and a copy button live in the command palette under
+**Remote attach 使用说明**; the settings panel only holds the switch and the
+connection command itself.
 
-The attach client has to be a **console-subsystem** binary so it can take over the
-terminal window UU Remote opened: raw VT input mode, `ReadConsoleW`, and full
-ownership of stdout. The main app is a **windows-subsystem** binary with no console
-at all — Tauri's WebView process has nowhere to send stdout.
+Only panes running a Claude runtime are shareable — plain PowerShell and `cmd`
+panes are never exposed. The pipe is created with a DACL limited to your Windows
+account and network clients are rejected, and each enable uses a fresh pipe name and
+random token written to `%LOCALAPPDATA%\SlateTerm\remote.json`, which is deleted on
+disable. Remote attach is off by default. Any process running as the same user can
+still inject input while it is enabled, so keep it off unless you are using it.
 
-The subsystem is decided at link time, so one executable cannot be both. Merging
-them behind a `--attach` flag is not possible; `slateterm.exe --attach` would still
-have no console to attach to.
+## Why the client is a separate process
 
-The practical consequence is only about distribution: installed or unzipped copies
-need `slateterm-attach.exe` sitting next to the main executable. The client resolves
-it from the app's own directory, so shipping both files together is enough — no
-`bundle.externalBin` configuration is needed. The release workflow copies it
-alongside `SlateTerm-…-windows-x64.exe` and includes both in `SHA256SUMS.txt`.
+Even though only one file is downloaded, remote attach still runs as its own
+process. The reason is the Windows console: the client must take over the terminal
+window UU Remote opened — raw VT input mode, `ReadConsoleW`, and full ownership of
+stdout. The main app is a **windows-subsystem** binary (Tauri's WebView process) and
+has no console at all, so it has nowhere to send that output.
+
+The subsystem is decided at link time, so a single executable cannot be both. The
+practical workaround is to embed the client's bytes inside the main executable and
+release them on first use, which keeps the download to one file while the two
+processes stay separate. `src-tauri/build.rs` performs the embedding; if the client
+has not been compiled yet it embeds nothing and SlateTerm falls back to looking for
+`slateterm-attach.exe` next to itself, so development builds and older layouts keep
+working.
 
 Step-by-step instructions and a copy button live in the command palette under
 **Remote attach 使用说明**; the settings panel only holds the switch and the
@@ -172,7 +183,8 @@ pnpm build
 ```
 
 Build the remote attach client on its own (rarely needed — `cargo build` and
-`pnpm tauri dev` already compile every target in the crate):
+`pnpm tauri dev` already compile every target in the crate; the release workflow
+builds it explicitly before the main binary so it can be embedded first):
 
 ```bash
 pnpm build:attach
@@ -185,9 +197,9 @@ pnpm tauri build
 ```
 
 Bundling is currently switched off (`bundle.active` is `false` in
-`src-tauri/tauri.conf.json`). Releases are distributed as standalone executables
-instead: the workflow stages `slateterm.exe` and `slateterm-attach.exe` side by
-side, which is all the client needs to be found.
+`src-tauri/tauri.conf.json`). Releases distribute a single executable instead: the
+attach client is embedded into `slateterm.exe` at build time and released to
+`%LOCALAPPDATA%\SlateTerm\` on first use, so one download is enough.
 
 ## Repository Notes
 

@@ -56,21 +56,24 @@ jobs:
       - name: Install frontend dependencies
         run: pnpm install --frozen-lockfile
 
+      - name: Build the attach client first
+        # 主程序的 build.rs 会把客户端二进制内嵌进去，从而发布版只需一个 exe。
+        # 但 Cargo 不保证两个 bin 的编译顺序，首次构建时客户端可能还没编出来，
+        # 内嵌就会落空。先单独编一次客户端，保证主程序构建时它一定在。
+        run: pnpm build:attach
+
       - name: Build SlateTerm
         run: pnpm build:desktop
 
-      - name: Stage standalone executables
+      - name: Stage standalone executable
         shell: pwsh
         run: |
           New-Item -ItemType Directory -Force -Path release-artifacts | Out-Null
+          # 只需主程序一个文件：slateterm-attach 已由 build.rs 内嵌进主程序，
+          # 首次开启 remote attach 时会自己释放到 %LOCALAPPDATA%\SlateTerm\。
           Copy-Item src-tauri/target/release/slateterm.exe "release-artifacts/SlateTerm-${{ steps.version.outputs.VERSION }}-windows-x64.exe"
-          # 附加客户端随主程序一起分发，放同一目录即可：主程序按自己所在目录查找
-          # slateterm-attach.exe，不需要配置 externalBin。
-          Copy-Item src-tauri/target/release/slateterm-attach.exe release-artifacts/slateterm-attach.exe
-          Get-ChildItem release-artifacts/*.exe | ForEach-Object {
-            $hash = (Get-FileHash $_.FullName -Algorithm SHA256).Hash.ToLowerInvariant()
-            "$hash  $($_.Name)" | Add-Content release-artifacts/SHA256SUMS.txt
-          }
+          $hash = (Get-FileHash "release-artifacts/SlateTerm-${{ steps.version.outputs.VERSION }}-windows-x64.exe" -Algorithm SHA256).Hash.ToLowerInvariant()
+          "$hash  SlateTerm-${{ steps.version.outputs.VERSION }}-windows-x64.exe" | Set-Content release-artifacts/SHA256SUMS.txt
 
       - name: Extract release notes
         id: notes
@@ -110,7 +113,6 @@ jobs:
           body_path: release-notes.md
           files: |
             release-artifacts/SlateTerm-${{ steps.version.outputs.VERSION }}-windows-x64.exe
-            release-artifacts/slateterm-attach.exe
             release-artifacts/SHA256SUMS.txt
           fail_on_unmatched_files: true
           draft: false
