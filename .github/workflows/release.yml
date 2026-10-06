@@ -12,7 +12,7 @@ on:
       - "v*"
 
 permissions:
-  contents: read
+  contents: write
 
 jobs:
   build-windows:
@@ -72,6 +72,25 @@ jobs:
             "$hash  $($_.Name)" | Add-Content release-artifacts/SHA256SUMS.txt
           }
 
+      - name: Extract release notes
+        id: notes
+        shell: pwsh
+        # 从 CHANGELOG 抽出当前版本那一节（到下一个 ## 之前）作为 Release 正文，
+        # 这样仓库里维护一份、发布页自动跟上，不需要手写第二遍。
+        run: |
+          $version = "${{ steps.version.outputs.VERSION }}".TrimStart('v')
+          $lines = Get-Content CHANGELOG.md
+          $start = ($lines | Select-String -Pattern "^## v$version\b" | Select-Object -First 1)
+          if (-not $start) { throw "CHANGELOG.md 里找不到 v$version 这一段" }
+          $from = $start.LineNumber
+          $end = $lines.Length
+          for ($i = $from; $i -lt $lines.Length; $i++) {
+            if ($lines[$i] -match '^## ') { $end = $i; break }
+          }
+          $body = ($lines[$from..($end - 1)] -join "`n")
+          $body | Set-Content release-notes.md -Encoding utf8
+          Write-Host $body
+
       - name: Upload release artifact
         uses: actions/upload-artifact@v4
         with:
@@ -79,3 +98,20 @@ jobs:
           path: release-artifacts/*
           if-no-files-found: error
           retention-days: 14
+
+      # tag 推送触发时才真正建 Release。workflow_dispatch 走的是分支 ref，
+      # 没有对应 tag 可挂，这一步会跳过，只留上面那份 Actions artifact。
+      - name: Publish GitHub Release
+        if: startsWith(github.ref, 'refs/tags/')
+        uses: softprops/action-gh-release@v2
+        with:
+          tag_name: ${{ steps.version.outputs.VERSION }}
+          name: SlateTerm ${{ steps.version.outputs.VERSION }}
+          body_path: release-notes.md
+          files: |
+            release-artifacts/SlateTerm-${{ steps.version.outputs.VERSION }}-windows-x64.exe
+            release-artifacts/slateterm-attach.exe
+            release-artifacts/SHA256SUMS.txt
+          fail_on_unmatched_files: true
+          draft: false
+          prerelease: false
