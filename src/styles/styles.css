@@ -183,7 +183,6 @@ button {
 .toolbar-shell,
 .toolbar,
 .workspace-hints,
-.settings-panel-header,
 .action-cluster {
   display: flex;
   align-items: center;
@@ -2113,22 +2112,76 @@ button {
 .settings-panel {
   display: flex;
   flex-direction: column;
-  width: min(440px, calc(100vw - 36px));
+  width: min(460px, calc(100vw - 36px));
   max-height: calc(100vh - 88px);
-  padding: 16px;
-  border: 1px solid rgba(255, 255, 255, 0.08);
-  border-radius: 20px;
-  background: rgba(12, 17, 24, 0.94);
-  box-shadow: 0 26px 60px rgba(0, 0, 0, 0.28);
+  padding: 0;
+  border: 1px solid rgba(255, 255, 255, 0.09);
+  border-radius: 16px;
+  background: rgba(13, 18, 25, 0.97);
+  box-shadow: 0 24px 70px rgba(0, 0, 0, 0.5), 0 0 0 1px rgba(0, 0, 0, 0.3);
+  overflow: hidden;
+}
+
+/* 头部固定不滚，内容区自己滚——比整块一起滚更容易定位 */
+.settings-panel-header {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 12px;
+  flex: 0 0 auto;
+  padding: 18px 20px 14px;
+  border-bottom: 1px solid rgba(255, 255, 255, 0.07);
+}
+
+.settings-panel-header strong {
+  font-size: 14px;
+  font-weight: 600;
+  letter-spacing: -0.01em;
+}
+
+.settings-panel-header p {
+  margin: 3px 0 0;
+  font-size: 11px;
+  line-height: 1.5;
+  opacity: 0.55;
 }
 
 /* 内容超出时面板内部滚动，不再把 Remote attach 那段挤出屏幕外 */
 .settings-panel > .settings-grid {
   min-height: 0;
+  flex: 1 1 auto;
   overflow-y: auto;
   overscroll-behavior: contain;
-  scrollbar-color: rgba(122, 144, 153, 0.52) transparent;
+  padding: 4px 20px 20px;
   scrollbar-width: thin;
+  scrollbar-color: rgba(140, 160, 172, 0.4) transparent;
+}
+
+/* 默认滚动条太细几乎抓不住；给一条 12px 轨道 + 圆角滑块，hover 才变亮 */
+.settings-panel > .settings-grid::-webkit-scrollbar {
+  width: 12px;
+}
+
+.settings-panel > .settings-grid::-webkit-scrollbar-track {
+  background: transparent;
+}
+
+.settings-panel > .settings-grid::-webkit-scrollbar-thumb {
+  min-height: 40px;
+  border: 3px solid transparent;
+  border-radius: 999px;
+  background: rgba(140, 160, 172, 0.34);
+  background-clip: padding-box;
+}
+
+.settings-panel > .settings-grid::-webkit-scrollbar-thumb:hover {
+  background: rgba(160, 200, 210, 0.62);
+  background-clip: padding-box;
+}
+
+.settings-panel > .settings-grid::-webkit-scrollbar-thumb:active {
+  background: rgba(84, 181, 176, 0.78);
+  background-clip: padding-box;
 }
 
 .theme-paper .settings-overlay {
@@ -2137,26 +2190,27 @@ button {
 
 .theme-paper .settings-panel {
   color: #2c261d;
-  border-color: rgba(47, 43, 34, 0.12);
-  background: rgba(247, 243, 232, 0.99);
-  box-shadow: 0 26px 60px rgba(72, 59, 41, 0.2);
+  border-color: rgba(47, 43, 34, 0.14);
+  background: rgba(250, 246, 238, 0.99);
+  box-shadow: 0 24px 70px rgba(72, 59, 41, 0.26);
 }
 
-.theme-paper .settings-panel input,
-.theme-paper .settings-panel select {
-  color: #2c261d;
-  border-color: rgba(47, 43, 34, 0.11);
-  background: #fffaf0;
+.theme-paper .settings-panel-header {
+  border-bottom-color: rgba(47, 43, 34, 0.1);
 }
 
-.theme-paper .overlay-close-button {
-  color: #716858 !important;
+.theme-paper .settings-panel > .settings-grid {
+  scrollbar-color: rgba(107, 97, 82, 0.4) transparent;
 }
 
-.settings-panel p {
-  margin: 4px 0 0;
-  font-size: 12px;
-  opacity: 0.7;
+.theme-paper .settings-panel > .settings-grid::-webkit-scrollbar-thumb {
+  background: rgba(107, 97, 82, 0.32);
+  background-clip: padding-box;
+}
+
+.theme-paper .settings-panel > .settings-grid::-webkit-scrollbar-thumb:hover {
+  background: rgba(107, 97, 82, 0.58);
+  background-clip: padding-box;
 }
 
 .overlay-close-button {
@@ -2177,71 +2231,211 @@ button {
   background: rgba(239, 107, 97, 0.09) !important;
 }
 
+/* 单列堆叠：窄面板里两列必然把标签和输入挤成一团，标签放输入上方才透气 */
 .settings-grid {
   display: grid;
-  grid-template-columns: repeat(2, minmax(0, 1fr));
-  gap: 14px;
-  margin-top: 18px;
-}
-
-.settings-grid label,
-.toggle-row {
-  display: grid;
-  gap: 8px;
-}
-
-.toggle-row {
-  grid-template-columns: auto 1fr;
-  align-items: center;
+  grid-template-columns: minmax(0, 1fr);
+  gap: 16px;
   margin-top: 16px;
 }
 
+.settings-grid > label {
+  display: grid;
+  gap: 6px;
+}
+
+.settings-grid > label > span {
+  font-size: 11px;
+  font-weight: 500;
+  letter-spacing: 0.01em;
+  opacity: 0.72;
+}
+
+/* 少数成对的短字段（字体大小/行高）仍可并排，各自保持「标签在上」 */
+.settings-pair {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 12px;
+}
+
+.settings-panel input[type="text"],
+.settings-panel input[type="number"],
+.settings-panel select {
+  width: 100%;
+  height: 34px;
+  padding: 0 11px;
+  border: 1px solid rgba(255, 255, 255, 0.1);
+  border-radius: 8px;
+  color: inherit;
+  font-size: 13px;
+  background: rgba(255, 255, 255, 0.04);
+  transition: border-color 140ms ease, background 140ms ease;
+}
+
+.settings-panel select {
+  appearance: none;
+  padding-right: 30px;
+  background-image: linear-gradient(45deg, transparent 50%, currentColor 50%),
+    linear-gradient(135deg, currentColor 50%, transparent 50%);
+  background-position: calc(100% - 16px) 15px, calc(100% - 11px) 15px;
+  background-size: 5px 5px, 5px 5px;
+  background-repeat: no-repeat;
+}
+
+.settings-panel input:hover,
+.settings-panel select:hover {
+  border-color: rgba(255, 255, 255, 0.18);
+  background: rgba(255, 255, 255, 0.06);
+}
+
+.settings-panel input:focus,
+.settings-panel select:focus {
+  outline: none;
+  border-color: rgba(84, 181, 176, 0.6);
+  background: rgba(255, 255, 255, 0.07);
+  box-shadow: 0 0 0 3px rgba(84, 181, 176, 0.14);
+}
+
+.theme-paper .settings-panel input,
+.theme-paper .settings-panel select {
+  color: #2c261d;
+  border-color: rgba(47, 43, 34, 0.14);
+  background: #fffdf8;
+}
+
+.theme-paper .settings-panel input:hover,
+.theme-paper .settings-panel select:hover {
+  border-color: rgba(47, 43, 34, 0.24);
+}
+
+.theme-paper .settings-panel input:focus,
+.theme-paper .settings-panel select:focus {
+  border-color: rgba(20, 95, 92, 0.55);
+  box-shadow: 0 0 0 3px rgba(20, 95, 92, 0.12);
+}
+
+/* 原生 checkbox 和整套 UI 完全不搭，换成常见的滑块开关 */
+.settings-panel input[type="checkbox"] {
+  appearance: none;
+  position: relative;
+  flex: 0 0 auto;
+  width: 38px;
+  height: 22px;
+  margin: 0;
+  border: 1px solid rgba(255, 255, 255, 0.12);
+  border-radius: 999px;
+  background: rgba(255, 255, 255, 0.08);
+  cursor: pointer;
+  transition: background 160ms ease, border-color 160ms ease;
+}
+
+.settings-panel input[type="checkbox"]::after {
+  content: "";
+  position: absolute;
+  top: 2px;
+  left: 2px;
+  width: 16px;
+  height: 16px;
+  border-radius: 999px;
+  background: #97a5ad;
+  box-shadow: 0 1px 3px rgba(0, 0, 0, 0.35);
+  transition: transform 160ms cubic-bezier(0.4, 0, 0.2, 1), background 160ms ease;
+}
+
+.settings-panel input[type="checkbox"]:checked {
+  border-color: rgba(84, 181, 176, 0.5);
+  background: rgba(84, 181, 176, 0.85);
+}
+
+.settings-panel input[type="checkbox"]:checked::after {
+  transform: translateX(16px);
+  background: #06231f;
+}
+
+.settings-panel input[type="checkbox"]:focus-visible {
+  outline: none;
+  box-shadow: 0 0 0 3px rgba(84, 181, 176, 0.24);
+}
+
+.theme-paper .settings-panel input[type="checkbox"] {
+  border-color: rgba(47, 43, 34, 0.16);
+  background: rgba(47, 43, 34, 0.08);
+}
+
+.theme-paper .settings-panel input[type="checkbox"]::after {
+  background: #fffdf8;
+}
+
+.theme-paper .settings-panel input[type="checkbox"]:checked {
+  border-color: rgba(20, 95, 92, 0.5);
+  background: rgba(20, 95, 92, 0.9);
+}
+
+.theme-paper .settings-panel input[type="checkbox"]:checked::after {
+  background: #fffdf8;
+}
+
+.toggle-row {
+  display: grid;
+  grid-template-columns: auto minmax(0, 1fr);
+  align-items: center;
+  gap: 11px;
+  margin-top: 14px;
+  font-size: 12.5px;
+  line-height: 1.5;
+}
+
+/* 分段的标题、说明、内容用一致的纵向节奏 */
 .settings-proxy-section {
   display: grid;
-  gap: 4px;
-  margin-top: 18px;
-  padding-top: 16px;
-  border-top: 1px solid rgba(255, 255, 255, 0.06);
+  gap: 10px;
+  margin-top: 22px;
+  padding-top: 20px;
+  border-top: 1px solid rgba(255, 255, 255, 0.07);
 }
 
 .theme-paper .settings-proxy-section {
-  border-top-color: rgba(63, 54, 42, 0.12);
+  border-top-color: rgba(47, 43, 34, 0.12);
 }
 
 .settings-proxy-heading {
   display: grid;
-  gap: 3px;
-  margin-bottom: 6px;
+  gap: 4px;
 }
 
 .settings-proxy-heading strong {
-  font-size: 12px;
+  font-size: 11px;
+  font-weight: 600;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+  opacity: 0.62;
 }
 
 .settings-proxy-heading span {
-  color: #74838b;
-  font-size: 10px;
+  color: #7d8a92;
+  font-size: 11.5px;
+  line-height: 1.55;
+}
+
+.theme-paper .settings-proxy-heading span {
+  color: #6b6152;
 }
 
 .settings-remote-command {
   display: grid;
-  gap: 4px;
+  gap: 8px;
   margin-top: 10px;
 }
 
-.settings-remote-command span {
-  color: #74838b;
-  font-size: 10px;
-}
-
 .settings-remote-command code {
-  padding: 6px 8px;
-  border-radius: 6px;
-  background: rgba(0, 0, 0, 0.28);
+  padding: 8px 10px;
+  border-radius: 8px;
   font-family: "JetBrainsMono Nerd Font", "Cascadia Mono", Consolas, monospace;
   font-size: 11px;
+  line-height: 1.5;
   overflow-wrap: anywhere;
   user-select: all;
+  background: rgba(0, 0, 0, 0.3);
 }
 
 .theme-paper .settings-remote-command code {
@@ -2612,10 +2806,6 @@ button {
 
   .toolbar-shell {
     justify-content: space-between;
-  }
-
-  .settings-grid {
-    grid-template-columns: 1fr;
   }
 }
 

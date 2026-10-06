@@ -65,7 +65,7 @@ export default function SettingsPanel({
         <div className="settings-panel-header">
           <div>
             <strong>Terminal settings</strong>
-            <p>Saved locally and applied immediately.</p>
+            <p>改动保存在本地，立即生效。</p>
           </div>
           <button type="button" className="overlay-close-button" aria-label="Close settings" onClick={onClose}>×</button>
         </div>
@@ -88,28 +88,30 @@ export default function SettingsPanel({
           />
         </label>
 
-        <label>
-          <span>Font Size</span>
-          <input
-            type="number"
-            min={11}
-            max={28}
-            value={settings.fontSize}
-            onChange={(e) => update("fontSize", Number(e.target.value))}
-          />
-        </label>
+        <div className="settings-pair">
+          <label>
+            <span>Font Size</span>
+            <input
+              type="number"
+              min={11}
+              max={28}
+              value={settings.fontSize}
+              onChange={(e) => update("fontSize", Number(e.target.value))}
+            />
+          </label>
 
-        <label>
-          <span>Line Height</span>
-          <input
-            type="number"
-            min={1}
-            max={2}
-            step={0.05}
-            value={settings.lineHeight}
-            onChange={(e) => update("lineHeight", Number(e.target.value))}
-          />
-        </label>
+          <label>
+            <span>Line Height</span>
+            <input
+              type="number"
+              min={1}
+              max={2}
+              step={0.05}
+              value={settings.lineHeight}
+              onChange={(e) => update("lineHeight", Number(e.target.value))}
+            />
+          </label>
+        </div>
 
         <label>
           <span>Cursor</span>
@@ -144,7 +146,7 @@ export default function SettingsPanel({
             checked={settings.rememberLayout}
             onChange={(e) => update("rememberLayout", e.target.checked)}
           />
-          <span>Remember current layout preference for the next launch</span>
+          <span>记住当前布局，下次启动时按它恢复</span>
         </label>
 
         <label className="toggle-row">
@@ -153,7 +155,7 @@ export default function SettingsPanel({
             checked={settings.completionSound !== false}
             onChange={(e) => update("completionSound", e.target.checked)}
           />
-          <span>Play a chime when Claude Code finishes a reply</span>
+          <span>Claude Code 回复结束时播放提示音</span>
         </label>
 
         <div className="settings-proxy-section">
@@ -200,7 +202,7 @@ export default function SettingsPanel({
         <div className="settings-proxy-section">
           <div className="settings-proxy-heading">
             <strong>Network proxy</strong>
-            <span>New terminal sessions only — already-open sessions keep their environment.</span>
+            <span>只影响新建的会话，已经开着的会话保持原环境。</span>
           </div>
           <label className="toggle-row">
             <input
@@ -208,9 +210,9 @@ export default function SettingsPanel({
               checked={proxy.enabled}
               onChange={(e) => updateProxy({ ...proxy, enabled: e.target.checked })}
             />
-            <span>Route new sessions through the local proxy (HTTP_PROXY / HTTPS_PROXY / ALL_PROXY)</span>
+            <span>给新会话加上本地代理环境变量（HTTP_PROXY / HTTPS_PROXY / ALL_PROXY）</span>
           </label>
-          <div className="settings-grid">
+          <div className="settings-pair">
             <label>
               <span>Proxy host</span>
               <input
