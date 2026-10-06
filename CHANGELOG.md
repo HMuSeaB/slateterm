@@ -7,6 +7,35 @@
 - Extend path completion from `cd` only to any command whose last argument contains a path separator, listing files and directories with folders first.
 - Enable PSReadLine Tab menu completion and restructure the frontend around extracted path utilities, image byte helpers, a `useNativeFileDrop` hook, and dedicated drop overlay / attachment chip components.
 
+## v1.1.0 - 2026-10-06
+
+新增功能：
+
+- 新增 Claude Code 完成提示音：Claude 回复结束时播放两声短音，依据终端标题字形判断工作/空闲状态，并监听 terminal bell 作为第二路触发。只在 Claude 会话响，普通 shell 不响，可在设置或命令面板关闭。
+- 新增远程 attach：通过本机命名管道把正在运行的 Claude 会话共享给本机另一个终端（例如 UU 远程开出的窗口），对方能看到输出也能直接打字，`Ctrl+]` 断开且 SlateTerm 侧会话不受影响，`Ctrl+C` 原样交给 Claude。仅共享 Claude 会话，管道 DACL 限当前 Windows 用户并拒绝网络客户端，握手带一次性随机 token，默认关闭。
+- 新增远程引导浮层：命令面板里可搜到「Remote attach 使用说明」，内含步骤说明与可复制的连接命令；设置面板只保留开关与命令本体。
+- 新增 `pnpm build:attach` 脚本；发布产物改为随主程序一起分发 `slateterm-attach.exe`，用户拿到两个文件放在同一目录即可使用。
+- 新增 Rust 依赖刷新工作流，默认试跑只打印版本表与 diff，确认后再落盘。
+- 新增工作区快速切换、PSReadLine 原生补全（预测改 InlineView 并用 try/catch 兜底）与代理一键开关。
+
+修复：
+
+- 修复多行粘贴倒序：此前粘贴把剪贴板文本带原始 `\r\n` 直接写进 pty，ConPTY 将裸 `\n` 视为 Ctrl+Enter，而 PSReadLine 把 Ctrl+Enter 绑为 InsertLineAbove，于是每行都插到前一行上方。改为统一走 `terminal.paste()`，由它把换行归一成 `\r` 并在应用开启 bracketed paste 时整段包裹。
+- 修复滑块开关在 WebView2 下勾选了但不动的显示问题：原实现依赖 input 的 `::after` 伪元素做 transform，改为 `ToggleSwitch` 组件用真实 DOM 承担视觉，checked 状态由 class 切换。
+- 修正滑块位移计算错误：轨道内槽 36px、滑块 16px、两侧留白各 1px，位移应为 18px，原先写 16px 导致滑块贴死右壁、看似只滑一半。
+- 修复跨屏缩放场景下原生拖放的命中错位（改为读取实时 device pixel ratio）。
+- 修复 PSReadLine 预测配置在某些环境报错导致 shell 集成中断的问题。
+
+改进：
+
+- 暗色主题从冷蓝灰配 teal 改为暖深棕配琥珀，与 paper 主题同源；品牌标渐变恢复原配色，终端 ANSI 16 色随之调整为暖底协调。
+- 重设计设置面板：自定义滚动条（12px 轨道加圆角滑块）、单列表单（标签置于输入上方）、iOS 风格滑块开关、统一的分段标题层级与纵向节奏；面板改为 flex 布局，头部固定不滚、内容区内部滚动，不再溢出屏幕。
+- Tauri 命令改为异步执行，pty 输出改为增量 UTF-8 解码并合并事件，终端渲染与输入路径优化，修复 WebGL 渲染器拆除崩溃。
+- 路径补全从仅 `cd` 扩展到任意命令的路径参数，目录与文件均可补全。
+- 依赖升级：tauri 与 @tauri-apps 到 2.12.1，xterm 到 6.0 成套，vite 到 6.4.3；修复 source-map-js 漏洞（1.2.1 → 1.2.2）。
+- 校正远程 attach 的构建说明：dev 下无需手动编译客户端，`cargo build` 默认即编译 crate 内所有 target。
+- 发布工作流产物名改为跟随 tag，不再硬编码版本号。
+
 ## v1.0.0 - 2026-08-04
 
 - Add Claude path attachment chips that collect dropped files and folders for the next prompt while ordinary shells continue to receive quoted paths directly.

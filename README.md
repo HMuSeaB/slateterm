@@ -193,7 +193,7 @@ side, which is all the client needs to be found.
 
 - pnpm is the required JavaScript package manager; `pnpm-lock.yaml` is the only dependency lock file.
 - The repo ignores local build output such as `node_modules`, `dist`, and `src-tauri/target`.
-- Current app version is `1.0.0`.
+- Current app version is `1.1.0`.
 - Startup remains optimized around opening a local shell quickly, while AI runtimes are treated as visible, workspace-aware terminal sessions.
 
 ## License

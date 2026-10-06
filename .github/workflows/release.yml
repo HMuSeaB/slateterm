@@ -6,7 +6,7 @@ on:
       tag:
         description: Release tag to build
         required: true
-        default: v1.0.0
+        default: v1.1.0
   push:
     tags:
       - "v*"
@@ -22,6 +22,16 @@ jobs:
     steps:
       - name: Check out source
         uses: actions/checkout@v4
+
+      - name: Resolve release version
+        id: version
+        shell: pwsh
+        # 产物名跟着 tag 走，不再硬编码版本号。workflow_dispatch 用输入值，
+        # push tag 触发时从 ref 名取。
+        run: |
+          $ref = "${{ github.ref_name }}"
+          if ("${{ github.event_name }}" -eq "workflow_dispatch") { $ref = "${{ inputs.tag }}" }
+          echo "VERSION=$ref" >> $env:GITHUB_OUTPUT
 
       - name: Set up pnpm
         uses: pnpm/action-setup@v4
@@ -53,7 +63,7 @@ jobs:
         shell: pwsh
         run: |
           New-Item -ItemType Directory -Force -Path release-artifacts | Out-Null
-          Copy-Item src-tauri/target/release/slateterm.exe release-artifacts/SlateTerm-v1.0.0-windows-x64.exe
+          Copy-Item src-tauri/target/release/slateterm.exe "release-artifacts/SlateTerm-${{ steps.version.outputs.VERSION }}-windows-x64.exe"
           # 附加客户端随主程序一起分发，放同一目录即可：主程序按自己所在目录查找
           # slateterm-attach.exe，不需要配置 externalBin。
           Copy-Item src-tauri/target/release/slateterm-attach.exe release-artifacts/slateterm-attach.exe
@@ -65,7 +75,7 @@ jobs:
       - name: Upload release artifact
         uses: actions/upload-artifact@v4
         with:
-          name: SlateTerm-v1.0.0-windows-x64
+          name: SlateTerm-${{ steps.version.outputs.VERSION }}-windows-x64
           path: release-artifacts/*
           if-no-files-found: error
           retention-days: 14
