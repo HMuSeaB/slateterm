@@ -107,6 +107,14 @@ With more than one Claude session open it lists them numbered; otherwise it conn
 straight away. `Ctrl+]` detaches, and the SlateTerm pane keeps running untouched.
 `Ctrl+C` is passed through to Claude rather than detached.
 
+Claude Code runs on the alternate screen, and the Windows console keeps no scrollback
+for it, so the remote window cannot scroll back through history — use the SlateTerm
+pane for that. Typing works normally.
+
+Step-by-step instructions and a copy button live in the command palette under
+**Remote attach 使用说明**; the settings panel only holds the switch and the
+connection command itself.
+
 Only panes running a Claude runtime are shareable — plain PowerShell and `cmd`
 panes are never exposed. The pipe is created with a DACL limited to your Windows
 account and network clients are rejected, and each enable uses a fresh pipe name and

@@ -15,15 +15,6 @@ function profileOptionLabel(profile: Profile) {
   return `${profile.name} · ${profile.category === "ai" ? "AI CLI" : "Shell"}`;
 }
 
-async function copyAttachCommand(command: string | null | undefined) {
-  if (!command) return;
-  try {
-    await navigator.clipboard.writeText(command);
-  } catch {
-    // 剪贴板权限被拒时不算错误，命令还是明文显示在下面，可以手动选
-  }
-}
-
 export default function SettingsPanel({
   profiles,
   settings,
@@ -168,7 +159,7 @@ export default function SettingsPanel({
         <div className="settings-proxy-section">
           <div className="settings-proxy-heading">
             <strong>Remote attach</strong>
-            <span>把正在运行的 Claude 会话共享给本机另一个终端（例如 UU 远程开的那个窗口），那边能看到输出也能直接打字。只有你当前这个 Windows 账户能连。</span>
+            <span>把正在运行的 Claude 会话共享给本机另一个终端（例如 UU 远程开的那个窗口），那边能看输出、能打字。只有你当前这个 Windows 账户能连。</span>
           </div>
           <label className="toggle-row">
             <input
@@ -179,33 +170,31 @@ export default function SettingsPanel({
             <span>允许 slateterm-attach 查看并输入 Claude 会话</span>
           </label>
           {remoteError && <p className="settings-remote-error" role="alert">{remoteError}</p>}
-          {settings.remoteAttach === true && remoteStatus.enabled && (
-            <div className="settings-remote-hint">
-              <ol>
-                <li>开一个 Claude 会话（AI 标签页才会被共享，普通 shell 不行）。</li>
-                <li>复制下面的命令，粘进 UU 远程那个终端窗口里回车。</li>
-                <li>多个会话会列序号让你选；连上后 <kbd>Ctrl</kbd>+<kbd>]</kbd> 断开。</li>
-              </ol>
-              {remoteStatus.clientReady ? (
-                <>
-                  <button
-                    type="button"
-                    className="settings-remote-copy"
-                    onClick={() => void copyAttachCommand(remoteStatus.attachCommand)}
-                  >
-                    {copiedAttachCommand ? "已复制" : "复制连接命令"}
-                  </button>
-                  <code>{remoteStatus.attachCommand}</code>
-                </>
-              ) : (
-                <p className="settings-remote-warning" role="alert">
-                  没找到 slateterm-attach 客户端。<code>pnpm tauri dev</code> 不会自动编译它，先跑一次：
-                  <code className="settings-remote-build">cd src-tauri &amp;&amp; cargo build --bin slateterm-attach</code>
-                  编完后回到这里打开开关，就会出现命令。
-                </p>
-              )}
-            </div>
-          )}
+          {remoteStatus.enabled &&
+            (remoteStatus.clientReady ? (
+              <div className="settings-remote-command">
+                <button
+                  type="button"
+                  className="settings-remote-copy"
+                  onClick={async () => {
+                    try {
+                      await navigator.clipboard.writeText(remoteStatus.attachCommand ?? "");
+                    } catch {
+                      // 剪贴板权限被拒时不算错误，命令还是明文显示着，可以手动选
+                    }
+                    setCopiedAttachCommand(true);
+                  }}
+                >
+                  {copiedAttachCommand ? "已复制" : "复制连接命令"}
+                </button>
+                <code>{remoteStatus.attachCommand}</code>
+              </div>
+            ) : (
+              <p className="settings-remote-warning" role="alert">
+                没找到 slateterm-attach 客户端，先跑一次 <code>pnpm build:attach</code>。
+                详细步骤见命令面板里的「Remote attach 使用说明」。
+              </p>
+            ))}
         </div>
 
         <div className="settings-proxy-section">

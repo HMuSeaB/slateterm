@@ -3,6 +3,7 @@ import CommandPalette, { type PaletteCommand } from "./components/CommandPalette
 import FilePreview from "./components/FilePreview";
 import HistoryPanel from "./components/HistoryPanel";
 import PaneErrorBoundary from "./components/PaneErrorBoundary";
+import RemoteAttachGuide from "./components/RemoteAttachGuide";
 import SettingsPanel from "./components/SettingsPanel";
 import TabBar from "./components/TabBar";
 import TerminalPane from "./components/TerminalPane";
@@ -165,6 +166,7 @@ export default function App() {
   const [switcherAnchor, setSwitcherAnchor] = useState<{ x: number; y: number } | null>(null);
   const [remoteState, setRemoteState] = useState<RemoteStatus>({ enabled: false });
   const [remoteError, setRemoteError] = useState<string | null>(null);
+  const [remoteGuideOpen, setRemoteGuideOpen] = useState(false);
   const paneDeckRef = useRef<HTMLDivElement | null>(null);
   const dragStateRef = useRef<{ tabId: string } | null>(null);
   // Latest-state mirrors read inside callbacks so handlers stay referentially
@@ -993,6 +995,7 @@ export default function App() {
       { id: "toggle-proxy", label: proxy.enabled ? "Disable local proxy" : "Enable local proxy", description: `${proxyTargetLabel(proxy)} · applies to new sessions`, shortcut: "Ctrl Alt P", keywords: "proxy network http clash direct", run: toggleProxy },
       { id: "toggle-chime", label: settings.completionSound !== false ? "Mute Claude completion chime" : "Enable Claude completion chime", description: "Sound when Claude Code finishes a reply", keywords: "sound bell notify chime mute 提示音", run: () => setSettings((current) => ({ ...current, completionSound: current.completionSound === false })) },
       { id: "toggle-remote", label: settings.remoteAttach ? "Disable remote attach" : "Enable remote attach", description: "Let slateterm-attach in another terminal join Claude sessions", keywords: "remote attach uu 远程 pipe", run: toggleRemoteAttach },
+      { id: "remote-guide", label: "Remote attach 使用说明", description: "三步连上 UU 远程那个终端，含可复制的连接命令", keywords: "remote attach uu 远程 使用说明 怎么用 help", run: () => setRemoteGuideOpen(true) },
       { id: "history", label: "Open command history", description: "Search, copy, or rerun commands", shortcut: "Ctrl Shift R", run: () => setHistoryOpen(true) },
       { id: "sidebar", label: workspaceOpen ? "Hide workspace sidebar" : "Show workspace sidebar", description: "Toggle workspace and tab navigation", shortcut: "Ctrl B", run: () => setWorkspaceOpen((current) => !current) },
       { id: "settings", label: "Open settings", description: "Theme, font, cursor, and startup shell", shortcut: "Ctrl ,", run: () => setSettingsOpen(true) },
@@ -1194,6 +1197,13 @@ export default function App() {
       </div>
 
       <CommandPalette open={paletteOpen} commands={paletteCommands} onClose={() => setPaletteOpen(false)} />
+      <RemoteAttachGuide
+        open={remoteGuideOpen}
+        enabled={remoteState.enabled && settings.remoteAttach === true}
+        clientReady={remoteState.clientReady === true}
+        attachCommand={remoteState.attachCommand}
+        onClose={() => setRemoteGuideOpen(false)}
+      />
       {switcherAnchor && (
         <WorkspaceSwitcher
           anchor={switcherAnchor}

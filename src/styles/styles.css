@@ -2111,12 +2111,24 @@ button {
 }
 
 .settings-panel {
+  display: flex;
+  flex-direction: column;
   width: min(440px, calc(100vw - 36px));
+  max-height: calc(100vh - 88px);
   padding: 16px;
   border: 1px solid rgba(255, 255, 255, 0.08);
   border-radius: 20px;
   background: rgba(12, 17, 24, 0.94);
   box-shadow: 0 26px 60px rgba(0, 0, 0, 0.28);
+}
+
+/* 内容超出时面板内部滚动，不再把 Remote attach 那段挤出屏幕外 */
+.settings-panel > .settings-grid {
+  min-height: 0;
+  overflow-y: auto;
+  overscroll-behavior: contain;
+  scrollbar-color: rgba(122, 144, 153, 0.52) transparent;
+  scrollbar-width: thin;
 }
 
 .theme-paper .settings-overlay {
@@ -2242,27 +2254,118 @@ button {
   font-size: 11px;
 }
 
-.settings-remote-hint {
+.remote-guide-overlay {
+  position: absolute;
+  inset: 0;
+  z-index: 45;
   display: grid;
-  gap: 8px;
-  margin-top: 8px;
+  place-items: start end;
+  padding: 70px 18px 18px;
+  background: rgba(3, 6, 10, 0.52);
+  backdrop-filter: blur(7px);
 }
 
-.settings-remote-hint ol {
+.remote-guide {
+  display: grid;
+  gap: 10px;
+  width: min(400px, calc(100vw - 36px));
+  padding: 16px;
+  border: 1px solid rgba(255, 255, 255, 0.08);
+  border-radius: 20px;
+  background: rgba(12, 17, 24, 0.96);
+  box-shadow: 0 26px 60px rgba(0, 0, 0, 0.3);
+}
+
+.remote-guide-header {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 12px;
+}
+
+.remote-guide-header strong {
+  font-size: 13px;
+}
+
+.remote-guide-header p {
+  margin: 3px 0 0;
+  color: #74838b;
+  font-size: 11px;
+  line-height: 1.5;
+}
+
+.remote-guide ol {
+  display: grid;
+  gap: 7px;
   margin: 0;
   padding-left: 18px;
-  color: #8d9aa2;
-  font-size: 11px;
+  color: #a7b4bb;
+  font-size: 12px;
   line-height: 1.55;
 }
 
-.settings-remote-hint ol kbd {
+.remote-guide ol kbd {
   padding: 0 4px;
   border: 1px solid rgba(255, 255, 255, 0.16);
   border-radius: 4px;
   font-family: inherit;
   font-size: 10px;
   background: rgba(255, 255, 255, 0.06);
+}
+
+.remote-guide-command {
+  padding: 7px 9px;
+  border-radius: 6px;
+  font-family: "JetBrainsMono Nerd Font", "Cascadia Mono", Consolas, monospace;
+  font-size: 11px;
+  overflow-wrap: anywhere;
+  user-select: all;
+  background: rgba(0, 0, 0, 0.28);
+}
+
+.remote-guide-note {
+  margin: 0;
+  color: #74838b;
+  font-size: 11px;
+  line-height: 1.5;
+}
+
+.remote-guide-warning {
+  display: grid;
+  gap: 6px;
+  margin: 0;
+  color: #e0b562;
+  font-size: 12px;
+  line-height: 1.5;
+}
+
+.remote-guide-warning code {
+  padding: 4px 7px;
+  border-radius: 6px;
+  font-family: "JetBrainsMono Nerd Font", "Cascadia Mono", Consolas, monospace;
+  font-size: 11px;
+  overflow-wrap: anywhere;
+  background: rgba(224, 181, 98, 0.12);
+}
+
+.theme-paper .remote-guide {
+  color: #2c261d;
+  border-color: rgba(47, 43, 34, 0.12);
+  background: rgba(247, 243, 232, 0.99);
+}
+
+.theme-paper .remote-guide-header p,
+.theme-paper .remote-guide ol,
+.theme-paper .remote-guide-note {
+  color: #6b6152;
+}
+
+.theme-paper .remote-guide-command {
+  background: rgba(63, 54, 42, 0.08);
+}
+
+.theme-paper .remote-guide-warning {
+  color: #8a5a12;
 }
 
 .settings-remote-copy {
