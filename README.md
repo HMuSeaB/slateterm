@@ -94,7 +94,7 @@ command palette entry **Remote attach 使用说明** to get a copyable command. 
 that into the other terminal:
 
 ```powershell
-& "$env:LOCALAPPDATA\SlateTerm\slateterm-attach-1.1.0.exe"
+& "$env:LOCALAPPDATA\SlateTerm\slateterm-attach-1.1.1.exe"
 ```
 
 The first time you switch remote attach on, SlateTerm writes that executable out of
@@ -136,17 +136,6 @@ processes stay separate. `src-tauri/build.rs` performs the embedding; if the cli
 has not been compiled yet it embeds nothing and SlateTerm falls back to looking for
 `slateterm-attach.exe` next to itself, so development builds and older layouts keep
 working.
-
-Step-by-step instructions and a copy button live in the command palette under
-**Remote attach 使用说明**; the settings panel only holds the switch and the
-connection command itself.
-
-Only panes running a Claude runtime are shareable — plain PowerShell and `cmd`
-panes are never exposed. The pipe is created with a DACL limited to your Windows
-account and network clients are rejected, and each enable uses a fresh pipe name and
-random token written to `%LOCALAPPDATA%\SlateTerm\remote.json`, which is deleted on
-disable. Remote attach is off by default. Any process running as the same user can
-still inject input while it is enabled, so keep it off unless you are using it.
 
 ## Development
 
@@ -205,7 +194,7 @@ attach client is embedded into `slateterm.exe` at build time and released to
 
 - pnpm is the required JavaScript package manager; `pnpm-lock.yaml` is the only dependency lock file.
 - The repo ignores local build output such as `node_modules`, `dist`, and `src-tauri/target`.
-- Current app version is `1.1.0`.
+- Current app version is `1.1.1`.
 - Startup remains optimized around opening a local shell quickly, while AI runtimes are treated as visible, workspace-aware terminal sessions.
 
 ## License

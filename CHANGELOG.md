@@ -7,6 +7,12 @@
 - Extend path completion from `cd` only to any command whose last argument contains a path separator, listing files and directories with folders first.
 - Enable PSReadLine Tab menu completion and restructure the frontend around extracted path utilities, image byte helpers, a `useNativeFileDrop` hook, and dedicated drop overlay / attachment chip components.
 
+## v1.1.1 - 2026-10-06
+
+- 附加客户端改为内嵌进主程序，发布版只需下载一个文件。首次打开 Remote attach 开关时主程序把它释放到 `%LOCALAPPDATA%\SlateTerm\slateterm-attach-<版本号>.exe`，不用再保证两个 exe 在同一目录。
+- 发布产物相应改为只上传主程序与 SHA256SUMS；CI 先单独构建客户端再构建主程序，保证内嵌一定拿到二进制。
+- 修正 README 中 Remote Attach 一节的示例路径与重复段落。
+
 ## v1.1.0 - 2026-10-06
 
 新增功能：
