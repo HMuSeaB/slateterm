@@ -120,12 +120,11 @@ The subsystem is decided at link time, so one executable cannot be both. Merging
 them behind a `--attach` flag is not possible; `slateterm.exe --attach` would still
 have no console to attach to.
 
-The practical consequence is only about distribution: for a release build the client
-must ship as a sidecar declared in `bundle.externalBin`, otherwise installed copies
-have no client and the settings panel will say so. That wire-up lives in
-`src-tauri/tauri.conf.json` with the binary under `src-tauri/binaries/`, named with
-the target triple (`slateterm-attach-x86_64-pc-windows-msvc.exe`). Bundling is
-currently switched off (`bundle.active` is `false`).
+The practical consequence is only about distribution: installed or unzipped copies
+need `slateterm-attach.exe` sitting next to the main executable. The client resolves
+it from the app's own directory, so shipping both files together is enough — no
+`bundle.externalBin` configuration is needed. The release workflow copies it
+alongside `SlateTerm-…-windows-x64.exe` and includes both in `SHA256SUMS.txt`.
 
 Step-by-step instructions and a copy button live in the command palette under
 **Remote attach 使用说明**; the settings panel only holds the switch and the
@@ -172,9 +171,8 @@ Build the frontend bundle:
 pnpm build
 ```
 
-Build the remote attach client on its own (only needed to refresh the sidecar
-under `src-tauri/binaries/` for release bundles — `pnpm tauri dev` and `cargo
-build` already compile it):
+Build the remote attach client on its own (rarely needed — `cargo build` and
+`pnpm tauri dev` already compile every target in the crate):
 
 ```bash
 pnpm build:attach
@@ -187,9 +185,9 @@ pnpm tauri build
 ```
 
 Bundling is currently switched off (`bundle.active` is `false` in
-`src-tauri/tauri.conf.json`). When it is switched back on, `slateterm-attach` has to
-be shipped as a sidecar through `bundle.externalBin`, otherwise release installs
-have no client and the settings panel will say so. That wire-up is not done yet.
+`src-tauri/tauri.conf.json`). Releases are distributed as standalone executables
+instead: the workflow stages `slateterm.exe` and `slateterm-attach.exe` side by
+side, which is all the client needs to be found.
 
 ## Repository Notes
 

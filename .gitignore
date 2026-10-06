@@ -3,6 +3,9 @@ dist/
 dist-stable/
 outputs/
 src-tauri/target/
+# 附加客户端按目标三元组重命名后的 sidecar 副本，仅供本地 tauri build 使用；
+# CI 的 tauri build 会自己编译，仓库里不需要预置二进制。
+src-tauri/binaries/
 .workbuddy/
 .antigravity_docs/
 .vscode/

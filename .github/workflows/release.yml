@@ -49,13 +49,18 @@ jobs:
       - name: Build SlateTerm
         run: pnpm build:desktop
 
-      - name: Stage standalone executable
+      - name: Stage standalone executables
         shell: pwsh
         run: |
           New-Item -ItemType Directory -Force -Path release-artifacts | Out-Null
           Copy-Item src-tauri/target/release/slateterm.exe release-artifacts/SlateTerm-v1.0.0-windows-x64.exe
-          $hash = (Get-FileHash release-artifacts/SlateTerm-v1.0.0-windows-x64.exe -Algorithm SHA256).Hash.ToLowerInvariant()
-          "$hash  SlateTerm-v1.0.0-windows-x64.exe" | Set-Content release-artifacts/SHA256SUMS.txt
+          # 附加客户端随主程序一起分发，放同一目录即可：主程序按自己所在目录查找
+          # slateterm-attach.exe，不需要配置 externalBin。
+          Copy-Item src-tauri/target/release/slateterm-attach.exe release-artifacts/slateterm-attach.exe
+          Get-ChildItem release-artifacts/*.exe | ForEach-Object {
+            $hash = (Get-FileHash $_.FullName -Algorithm SHA256).Hash.ToLowerInvariant()
+            "$hash  $($_.Name)" | Add-Content release-artifacts/SHA256SUMS.txt
+          }
 
       - name: Upload release artifact
         uses: actions/upload-artifact@v4
