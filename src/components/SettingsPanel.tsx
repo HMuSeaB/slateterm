@@ -185,8 +185,8 @@ export default function SettingsPanel({
               </div>
             ) : (
               <p className="settings-remote-warning" role="alert">
-                没找到 slateterm-attach 客户端，先跑一次 <code>pnpm build:attach</code>。
-                详细步骤见命令面板里的「Remote attach 使用说明」。
+                没找到 slateterm-attach 客户端。dev 下重跑一次 <code>pnpm tauri dev</code> 就会编出来；
+                打包版本出现这个提示则说明 sidecar 没随包分发。详细步骤见命令面板里的「Remote attach 使用说明」。
               </p>
             ))}
         </div>

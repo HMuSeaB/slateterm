@@ -62,8 +62,9 @@ export default function RemoteAttachGuide({
           </p>
         ) : !clientReady ? (
           <p className="remote-guide-warning">
-            没找到 <code>slateterm-attach.exe</code>。<code>pnpm tauri dev</code> 不会编译它，先跑一次：
-            <code className="remote-guide-build">pnpm build:attach</code>
+            没找到 <code>slateterm-attach.exe</code>。dev 下 <code>cargo build</code> 会自动编它，出现这个提示说明当前构建目录里没有——重新跑一次
+            <code className="remote-guide-build">pnpm tauri dev</code>
+            即可；如果是打包后的安装版本，则说明 sidecar 没有随包分发。
           </p>
         ) : (
           <>

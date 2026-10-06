@@ -89,19 +89,17 @@ settings, or the `Mute Claude completion chime` command in the command palette.
 Remote attach lets a second terminal window on the same PC watch and type into a
 running Claude session — for example the terminal that UU Remote opens for you.
 
-```bash
-cd src-tauri
-cargo build --bin slateterm-attach
-```
-
-`pnpm tauri dev` builds the app binary but not the client, so build the client at
-least once. A `pnpm build:attach` shortcut does the same thing. Then open
-**Settings → Remote attach**, switch it on, and copy the command it shows. Paste that
-command into the other terminal:
+Turn on **Settings → Remote attach** (or the command palette toggle), then use the
+command palette entry **Remote attach 使用说明** to get a copyable command. Paste
+that into the other terminal:
 
 ```powershell
 & 'C:\...\target\debug\slateterm-attach.exe'
 ```
+
+Nothing extra to build in development: `cargo build` compiles every target in the
+crate by default, so `pnpm tauri dev` produces `slateterm-attach.exe` next to the
+app binary on its own.
 
 With more than one Claude session open it lists them numbered; otherwise it connects
 straight away. `Ctrl+]` detaches, and the SlateTerm pane keeps running untouched.
@@ -110,6 +108,24 @@ straight away. `Ctrl+]` detaches, and the SlateTerm pane keeps running untouched
 Claude Code runs on the alternate screen, and the Windows console keeps no scrollback
 for it, so the remote window cannot scroll back through history — use the SlateTerm
 pane for that. Typing works normally.
+
+## Why there are two executables
+
+The attach client has to be a **console-subsystem** binary so it can take over the
+terminal window UU Remote opened: raw VT input mode, `ReadConsoleW`, and full
+ownership of stdout. The main app is a **windows-subsystem** binary with no console
+at all — Tauri's WebView process has nowhere to send stdout.
+
+The subsystem is decided at link time, so one executable cannot be both. Merging
+them behind a `--attach` flag is not possible; `slateterm.exe --attach` would still
+have no console to attach to.
+
+The practical consequence is only about distribution: for a release build the client
+must ship as a sidecar declared in `bundle.externalBin`, otherwise installed copies
+have no client and the settings panel will say so. That wire-up lives in
+`src-tauri/tauri.conf.json` with the binary under `src-tauri/binaries/`, named with
+the target triple (`slateterm-attach-x86_64-pc-windows-msvc.exe`). Bundling is
+currently switched off (`bundle.active` is `false`).
 
 Step-by-step instructions and a copy button live in the command palette under
 **Remote attach 使用说明**; the settings panel only holds the switch and the
@@ -156,7 +172,9 @@ Build the frontend bundle:
 pnpm build
 ```
 
-Build the remote attach client (needed before remote attach works in a dev run):
+Build the remote attach client on its own (only needed to refresh the sidecar
+under `src-tauri/binaries/` for release bundles — `pnpm tauri dev` and `cargo
+build` already compile it):
 
 ```bash
 pnpm build:attach
