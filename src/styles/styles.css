@@ -2329,6 +2329,8 @@ button {
   transition: background 160ms ease, border-color 160ms ease;
 }
 
+/* 滑块起点贴左内壁，位移只跟「内槽宽 - 滑块宽 - 两侧留白」有关：这里是
+   36 - 16 - 2*1 = 18。之前写 16，右边只剩 1px、左边留 2px，看着像只滑一半。 */
 .settings-panel input[type="checkbox"]::after {
   content: "";
   position: absolute;
@@ -2348,7 +2350,7 @@ button {
 }
 
 .settings-panel input[type="checkbox"]:checked::after {
-  transform: translateX(16px);
+  transform: translateX(18px);
   background: #06231f;
 }
 
