@@ -1,0 +1,32 @@
+version: 2
+
+updates:
+  # Rust：glib 及其 GTK/WebKit 栈只参与 Linux/macOS 目标解析。本仓库是
+  # Windows 专用，cargo tree 在当前目标下不含 glib，它不会编译进产物，
+  # 所以它的 advisory 对实际构建没有影响，这里按包名忽略，避免重复骚扰。
+  - package-ecosystem: cargo
+    directory: /src-tauri
+    schedule:
+      interval: weekly
+    open-pull-requests-limit: 5
+    ignore:
+      - dependency-name: glib
+      - dependency-name: atk
+      - dependency-name: cairo-rs
+      - dependency-name: gdk
+      - dependency-name: gdk-pixbuf
+      - dependency-name: gdkx11
+      - dependency-name: gtk
+      - dependency-name: javascriptcore-rs
+      - dependency-name: libappindicator
+      - dependency-name: pango
+      - dependency-name: soup3
+      - dependency-name: webkit2gtk
+
+  # npm：source-map-js 这类传递依赖的漏洞只有声明了 npm 生态才会被扫到。
+  - package-ecosystem: npm
+    directory: /
+    schedule:
+      interval: weekly
+    open-pull-requests-limit: 5
+    versioning-strategy: increase
