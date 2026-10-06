@@ -1,5 +1,6 @@
 import { useEffect, useState } from "react";
 import type { Profile, RemoteStatus, Settings } from "../lib/types";
+import ToggleSwitch from "./ToggleSwitch";
 
 type Props = {
   profiles: Profile[];
@@ -140,37 +141,28 @@ export default function SettingsPanel({
         </label>
       </div>
 
-        <label className="toggle-row">
-          <input
-            type="checkbox"
-            checked={settings.rememberLayout}
-            onChange={(e) => update("rememberLayout", e.target.checked)}
-          />
-          <span>记住当前布局，下次启动时按它恢复</span>
-        </label>
+        <ToggleSwitch
+          checked={settings.rememberLayout}
+          onChange={(value) => update("rememberLayout", value)}
+          label="记住当前布局，下次启动时按它恢复"
+        />
 
-        <label className="toggle-row">
-          <input
-            type="checkbox"
-            checked={settings.completionSound !== false}
-            onChange={(e) => update("completionSound", e.target.checked)}
-          />
-          <span>Claude Code 回复结束时播放提示音</span>
-        </label>
+        <ToggleSwitch
+          checked={settings.completionSound !== false}
+          onChange={(value) => update("completionSound", value)}
+          label="Claude Code 回复结束时播放提示音"
+        />
 
         <div className="settings-proxy-section">
           <div className="settings-proxy-heading">
             <strong>Remote attach</strong>
             <span>把正在运行的 Claude 会话共享给本机另一个终端（例如 UU 远程开的那个窗口），那边能看输出、能打字。只有你当前这个 Windows 账户能连。</span>
           </div>
-          <label className="toggle-row">
-            <input
-              type="checkbox"
-              checked={settings.remoteAttach === true}
-              onChange={(e) => update("remoteAttach", e.target.checked)}
-            />
-            <span>允许 slateterm-attach 查看并输入 Claude 会话</span>
-          </label>
+          <ToggleSwitch
+            checked={settings.remoteAttach === true}
+            onChange={(value) => update("remoteAttach", value)}
+            label="允许 slateterm-attach 查看并输入 Claude 会话"
+          />
           {remoteError && <p className="settings-remote-error" role="alert">{remoteError}</p>}
           {remoteStatus.enabled &&
             (remoteStatus.clientReady ? (
@@ -204,14 +196,11 @@ export default function SettingsPanel({
             <strong>Network proxy</strong>
             <span>只影响新建的会话，已经开着的会话保持原环境。</span>
           </div>
-          <label className="toggle-row">
-            <input
-              type="checkbox"
-              checked={proxy.enabled}
-              onChange={(e) => updateProxy({ ...proxy, enabled: e.target.checked })}
-            />
-            <span>给新会话加上本地代理环境变量（HTTP_PROXY / HTTPS_PROXY / ALL_PROXY）</span>
-          </label>
+          <ToggleSwitch
+            checked={proxy.enabled}
+            onChange={(value) => updateProxy({ ...proxy, enabled: value })}
+            label="给新会话加上本地代理环境变量（HTTP_PROXY / HTTPS_PROXY / ALL_PROXY）"
+          />
           <div className="settings-pair">
             <label>
               <span>Proxy host</span>
