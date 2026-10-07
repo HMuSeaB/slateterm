@@ -65,6 +65,9 @@ jobs:
         # target/release，内嵌就静默落空了（v1.1.1 就是这么坏掉的）。
         run: pnpm build:attach
 
+      - name: Build SlateTerm
+        run: pnpm build:desktop
+
       - name: Verify the attach client is embedded
         shell: pwsh
         # 内嵌落空时构建完全静默：build.rs 只打一条 cargo:warning，产物照样出，
@@ -74,6 +77,10 @@ jobs:
         # 前端都没有，所以能当内嵌生效的佐证。
         run: |
           $exe = "src-tauri/target/release/slateterm.exe"
+          if (-not (Test-Path $exe)) {
+            Write-Error "构建产物不存在：$exe。主程序构建失败或被跳过，这一步查不了内嵌。"
+            exit 1
+          }
           $found = $false
           $stream = [System.IO.File]::OpenRead($exe)
           try {
