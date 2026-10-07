@@ -62,10 +62,14 @@ export default function RemoteAttachGuide({
           </p>
         ) : !clientReady ? (
           <p className="remote-guide-warning">
-            没找到 <code>slateterm-attach.exe</code>。发布版会在首次打开开关时自动把它释放到
+            没找到 <code>slateterm-attach.exe</code>。正式版打开开关时会自动把它释放到
             <code className="remote-guide-build">%LOCALAPPDATA%\SlateTerm\</code>
-            ，出现这个提示说明释放失败，重开一次开关即可；dev 下则是当前构建目录里没有客户端——重新跑一次
-            <code className="remote-guide-build">pnpm tauri dev</code>。
+            ，出现这个提示说明释放失败了：重开一次开关，或确认{' '}
+            <code className="remote-guide-build">%LOCALAPPDATA%\SlateTerm\</code> 可写。
+            dev 下则是当前构建产物里没有客户端——在 <code className="remote-guide-build">src-tauri</code>{' '}
+            目录跑一次 <code className="remote-guide-build">cargo build --bin slateterm-attach</code>
+            （主程序是 release 构建时才要加 <code className="remote-guide-build">--release</code>，
+            否则客户端编进 debug 目录，主程序不会内嵌它）。
           </p>
         ) : (
           <>

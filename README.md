@@ -94,7 +94,7 @@ command palette entry **Remote attach 使用说明** to get a copyable command. 
 that into the other terminal:
 
 ```powershell
-& "$env:LOCALAPPDATA\SlateTerm\slateterm-attach-1.1.1.exe"
+& "$env:LOCALAPPDATA\SlateTerm\slateterm-attach-1.1.2.exe"
 ```
 
 The first time you switch remote attach on, SlateTerm writes that executable out of
@@ -173,11 +173,18 @@ pnpm build
 
 Build the remote attach client on its own (rarely needed — `cargo build` and
 `pnpm tauri dev` already compile every target in the crate; the release workflow
-builds it explicitly before the main binary so it can be embedded first):
+builds it explicitly **before** the main binary so it can be embedded first):
 
 ```bash
 pnpm build:attach
 ```
+
+This passes `--release`, because `build.rs` embeds the client from
+`target/<profile>/` and the shipped binary is a release build. Building it in
+debug only puts it in `target/debug/`, where the release build will not look, and
+the embed then silently embeds nothing. The release workflow additionally scans
+the built `slateterm.exe` for the client's `--help` text so that case fails the
+build instead of shipping a program whose Remote attach never works.
 
 Build the desktop application:
 
@@ -194,7 +201,7 @@ attach client is embedded into `slateterm.exe` at build time and released to
 
 - pnpm is the required JavaScript package manager; `pnpm-lock.yaml` is the only dependency lock file.
 - The repo ignores local build output such as `node_modules`, `dist`, and `src-tauri/target`.
-- Current app version is `1.1.1`.
+- Current app version is `1.1.2`.
 - Startup remains optimized around opening a local shell quickly, while AI runtimes are treated as visible, workspace-aware terminal sessions.
 
 ## License

@@ -1,5 +1,18 @@
 # Changelog
 
+## v1.1.2 - 2026-10-07
+
+修复：
+
+- 修复 v1.1.1 里 Remote attach 完全不可用：发布版的主程序里其实没有内嵌 slateterm-attach，打开开关只会提示「没找到客户端」。根因是 `pnpm build:attach` 没带 `--release`，客户端编进了 `target/debug/`，而 `build.rs` 只按当前 profile 取 `target/release/` 下的那一份，两次内嵌都静默落空。
+- `build:attach` 补上 `--release`，使客户端与主程序同一 profile；`build.rs` 的注释同步说明它只认当前 profile、不做「release 找不到就退回 debug」的降级，避免把 profile 不匹配藏起来。
+
+改进：
+
+- 发布工作流新增一步验证：构建完成后扫 `slateterm.exe` 内是否含客户端的 `--help` 文本（`用法：slateterm-attach`），搜不到就直接让 CI 失败。此前内嵌落空只发一条 cargo warning，产物照样出，问题会一路带进发布版。
+- 补写本机验证：本地跑 release 客户端 + release 主程序后确认内嵌字节真的进了产物（主程序体积增加约 800 KB），并正反两方向验证 CI 断言——对坏产物报错、对好产物通过。
+- 修正设置面板与「Remote attach 使用说明」里关于客户端的指引：此前写的「重开一次开关」和「重跑一次 `pnpm tauri dev`」都不解决问题，改为说明释放路径、可写性检查，以及 dev 下应在对应 profile 构建客户端。
+
 ## Unreleased
 
 - Refine the file drop overlay: show the dragged file names and count while hovering, soften the backdrop so terminal content stays readable, localize drop and attachment hints to Chinese, and quote dropped paths conservatively for both PowerShell and cmd.

@@ -1,7 +1,7 @@
 {
   "name": "slateterm",
   "private": true,
-  "version": "1.1.1",
+  "version": "1.1.2",
   "packageManager": "pnpm@10.24.0",
   "engines": {
     "node": ">=20",
@@ -12,7 +12,7 @@
     "dev": "vite",
     "build": "tsc && vite build",
     "build:desktop": "tauri build",
-    "build:attach": "cargo build --manifest-path src-tauri/Cargo.toml --bin slateterm-attach",
+    "build:attach": "cargo build --manifest-path src-tauri/Cargo.toml --release --bin slateterm-attach",
     "preview": "vite preview",
     "tauri": "tauri"
   },

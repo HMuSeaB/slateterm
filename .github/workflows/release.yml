@@ -60,10 +60,37 @@ jobs:
         # 主程序的 build.rs 会把客户端二进制内嵌进去，从而发布版只需一个 exe。
         # 但 Cargo 不保证两个 bin 的编译顺序，首次构建时客户端可能还没编出来，
         # 内嵌就会落空。先单独编一次客户端，保证主程序构建时它一定在。
+        # --release 不能省：build.rs 按 PROFILE 取 target/<profile>/ 下的客户端，
+        # 少了它客户端会编进 target/debug，而主程序是 release 构建、只看
+        # target/release，内嵌就静默落空了（v1.1.1 就是这么坏掉的）。
         run: pnpm build:attach
 
-      - name: Build SlateTerm
-        run: pnpm build:desktop
+      - name: Verify the attach client is embedded
+        shell: pwsh
+        # 内嵌落空时构建完全静默：build.rs 只打一条 cargo:warning，产物照样出，
+        # 只是解压后找不到 slateterm-attach。v1.1.1 就是这么发布了空壳。
+        # 这里直接查主程序里有没有客户端的独有字符串，把这类失败变成硬失败。
+        # "用法：slateterm-attach" 只存在于客户端源码的 --help 输出，主程序和
+        # 前端都没有，所以能当内嵌生效的佐证。
+        run: |
+          $exe = "src-tauri/target/release/slateterm.exe"
+          $found = $false
+          $stream = [System.IO.File]::OpenRead($exe)
+          try {
+            $reader = New-Object System.IO.StreamReader($stream, [System.Text.Encoding]::UTF8)
+            while (-not $reader.EndOfStream) {
+              $line = $reader.ReadLine()
+              if ($line -and $line.Contains("用法：slateterm-attach")) { $found = $true; break }
+            }
+            $reader.Close()
+          } finally {
+            $stream.Dispose()
+          }
+          if (-not $found) {
+            Write-Error "主程序里找不到内嵌的 slateterm-attach（搜不到客户端的 --help 文本）。构建顺序或 profile 不对，产物会是打不开 Remote attach 的空壳。"
+            exit 1
+          }
+          Write-Host "OK: 主程序里确实内嵌了 slateterm-attach"
 
       - name: Stage standalone executable
         shell: pwsh

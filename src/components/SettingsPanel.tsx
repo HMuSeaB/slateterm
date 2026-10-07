@@ -185,8 +185,13 @@ export default function SettingsPanel({
               </div>
             ) : (
               <p className="settings-remote-warning" role="alert">
-                没找到 slateterm-attach 客户端。发布版会在打开开关时自动释放，出现这个提示就重开一次开关；
-                dev 下重跑一次 <code>pnpm tauri dev</code> 即可。详细步骤见命令面板里的「Remote attach 使用说明」。
+                没找到 slateterm-attach 客户端。正式版打开这个开关时会自动把它释放到{' '}
+                <code>%LOCALAPPDATA%\SlateTerm\</code>
+                ，出现这个提示说明释放失败：重开一次开关，或确认 <code>%LOCALAPPDATA%\SlateTerm\</code>{' '}
+                可写。dev 下则是当前构建产物里没有客户端，在{' '}
+                <code>src-tauri</code> 下跑一次 <code>cargo build --bin slateterm-attach</code>{' '}
+                （不带 <code>--release</code>，debug 构建嵌的是 debug 客户端）。详细步骤见命令面板里的
+                「Remote attach 使用说明」。
               </p>
             ))}
         </div>
