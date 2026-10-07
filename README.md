@@ -94,7 +94,7 @@ command palette entry **Remote attach 使用说明** to get a copyable command. 
 that into the other terminal:
 
 ```powershell
-& "$env:LOCALAPPDATA\SlateTerm\slateterm-attach-1.1.2.exe"
+& "$env:LOCALAPPDATA\SlateTerm\slateterm-attach-1.1.3.exe"
 ```
 
 The first time you switch remote attach on, SlateTerm writes that executable out of
@@ -201,7 +201,7 @@ attach client is embedded into `slateterm.exe` at build time and released to
 
 - pnpm is the required JavaScript package manager; `pnpm-lock.yaml` is the only dependency lock file.
 - The repo ignores local build output such as `node_modules`, `dist`, and `src-tauri/target`.
-- Current app version is `1.1.2`.
+- Current app version is `1.1.3`.
 - Startup remains optimized around opening a local shell quickly, while AI runtimes are treated as visible, workspace-aware terminal sessions.
 
 ## License
