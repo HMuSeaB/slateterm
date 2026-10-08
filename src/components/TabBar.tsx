@@ -47,7 +47,10 @@ type Props = {
   activeTabId: string | null;
   onSelect: (tabId: string) => void;
   onClose: (tabId: string) => void;
+  onCloseOthers?: (tabId: string) => void;
+  onCloseToRight?: (tabId: string) => void;
   onReorder: (draggedTabId: string, targetTabId: string, placement: DropPlacement) => void;
+  onNewTab?: () => void;
 };
 
 const DRAG_THRESHOLD = 5;
@@ -55,7 +58,16 @@ const EDGE_SCROLL_ZONE = 64;
 const MIN_EDGE_SCROLL_SPEED = 4;
 const MAX_EDGE_SCROLL_SPEED = 18;
 
-export default function TabBar({ tabs, activeTabId, onSelect, onClose, onReorder }: Props) {
+export default function TabBar({
+  tabs,
+  activeTabId,
+  onSelect,
+  onClose,
+  onCloseOthers,
+  onCloseToRight,
+  onReorder,
+  onNewTab,
+}: Props) {
   const [draggingTabId, setDraggingTabId] = useState<string | null>(null);
   const [dropTarget, setDropTarget] = useState<DropTarget | null>(null);
   const [dragPreview, setDragPreview] = useState<DragPreview | null>(null);
@@ -154,6 +166,11 @@ export default function TabBar({ tabs, activeTabId, onSelect, onClose, onReorder
   }
 
   function handlePointerDown(event: PointerEvent<HTMLButtonElement>, tabId: string) {
+    if (event.button === 1) {
+      event.preventDefault();
+      onClose(tabId);
+      return;
+    }
     if (event.button !== 0 || tabs.length < 2) {
       return;
     }
@@ -312,6 +329,12 @@ export default function TabBar({ tabs, activeTabId, onSelect, onClose, onReorder
                 tab.id === draggingTabId && "is-dragging",
                 dropTarget?.tabId === tab.id && `is-drop-${dropTarget.placement}`,
               )}
+              onAuxClick={(event) => {
+                if (event.button === 1) {
+                  event.preventDefault();
+                  onClose(tab.id);
+                }
+              }}
               onContextMenu={(event) => {
                 event.preventDefault();
                 setContextMenu({ tabId: tab.id, x: event.clientX, y: event.clientY });
@@ -320,7 +343,7 @@ export default function TabBar({ tabs, activeTabId, onSelect, onClose, onReorder
               <button
                 type="button"
                 className="tab-pill-main"
-                title={`${tab.title} · Drag to reorder · Ctrl+Shift+PageUp/PageDown`}
+                title={`${tab.title} · Drag to reorder · Middle-click to close`}
                 onClick={() => handleTabClick(tab.id)}
                 onKeyDown={(event) => handleTabKeyDown(event, tab.id)}
                 onPointerDown={(event) => handlePointerDown(event, tab.id)}
@@ -336,6 +359,18 @@ export default function TabBar({ tabs, activeTabId, onSelect, onClose, onReorder
             </div>
           );
         })}
+
+        {onNewTab && (
+          <button
+            type="button"
+            className="tabbar-new-tab-button"
+            title="New tab (Ctrl+T)"
+            aria-label="New tab"
+            onClick={onNewTab}
+          >
+            +
+          </button>
+        )}
       </nav>
 
       {dragPreview && createPortal(
@@ -360,6 +395,46 @@ export default function TabBar({ tabs, activeTabId, onSelect, onClose, onReorder
           aria-label="Tab actions"
           onPointerDown={(event) => event.stopPropagation()}
         >
+          <button
+            type="button"
+            role="menuitem"
+            onClick={() => {
+              onClose(contextMenu.tabId);
+              setContextMenu(null);
+            }}
+          >
+            <span aria-hidden="true">✕</span>
+            <div><strong>Close tab</strong><small>Close this terminal tab</small></div>
+          </button>
+          {onCloseOthers && (
+            <button
+              type="button"
+              role="menuitem"
+              disabled={tabs.length <= 1}
+              onClick={() => {
+                onCloseOthers(contextMenu.tabId);
+                setContextMenu(null);
+              }}
+            >
+              <span aria-hidden="true">⊘</span>
+              <div><strong>Close other tabs</strong><small>Keep only this tab</small></div>
+            </button>
+          )}
+          {onCloseToRight && (
+            <button
+              type="button"
+              role="menuitem"
+              disabled={tabs.findIndex((t) => t.id === contextMenu.tabId) >= tabs.length - 1}
+              onClick={() => {
+                onCloseToRight(contextMenu.tabId);
+                setContextMenu(null);
+              }}
+            >
+              <span aria-hidden="true">⇥</span>
+              <div><strong>Close tabs to the right</strong><small>Close all tabs to the right</small></div>
+            </button>
+          )}
+          <hr className="tab-context-menu-divider" />
           <button type="button" role="menuitem" disabled={tabs[0]?.id === contextMenu.tabId} onClick={() => moveTabToEdge(contextMenu.tabId, "start")}>
             <span aria-hidden="true">⇤</span>
             <div><strong>Move to first</strong><small>Place at the left edge</small></div>

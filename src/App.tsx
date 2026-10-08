@@ -490,34 +490,57 @@ export default function App() {
   }, [booting, settings.remoteAttach]);
 
   useEffect(() => {
+    let rafId: number | null = null;
     const onMouseMove = (event: MouseEvent) => {
       const dragState = dragStateRef.current;
       if (!dragState || !paneDeckRef.current) {
         return;
       }
+      if (rafId !== null) {
+        return;
+      }
+      const clientX = event.clientX;
+      rafId = requestAnimationFrame(() => {
+        rafId = null;
+        const currentDrag = dragStateRef.current;
+        if (!currentDrag || !paneDeckRef.current) {
+          return;
+        }
 
-      const rect = paneDeckRef.current.getBoundingClientRect();
-      const rawRatio = (event.clientX - rect.left - PANE_SPLITTER_WIDTH / 2) / (rect.width - PANE_SPLITTER_WIDTH);
-      const clampedRatio = normalizeSplitRatio(rawRatio);
+        const rect = paneDeckRef.current.getBoundingClientRect();
+        const rawRatio = (clientX - rect.left - PANE_SPLITTER_WIDTH / 2) / (rect.width - PANE_SPLITTER_WIDTH);
+        const clampedRatio = normalizeSplitRatio(rawRatio);
 
-      setTabs((current) =>
-        current.map((tab) => {
-          if (tab.id !== dragState.tabId || tab.panes.length !== 2) {
-            return tab;
-          }
-          return {
-            ...tab,
-            panes: [
-              { ...tab.panes[0], sizeRatio: clampedRatio },
-              { ...tab.panes[1], sizeRatio: 1 - clampedRatio },
-            ],
-          };
-        }),
-      );
+        setTabs((current) =>
+          current.map((tab) => {
+            if (tab.id !== currentDrag.tabId || tab.panes.length !== 2) {
+              return tab;
+            }
+            if (Math.abs((tab.panes[0]?.sizeRatio ?? 0.5) - clampedRatio) < 0.002) {
+              return tab;
+            }
+            return {
+              ...tab,
+              panes: [
+                { ...tab.panes[0], sizeRatio: clampedRatio },
+                { ...tab.panes[1], sizeRatio: 1 - clampedRatio },
+              ],
+            };
+          }),
+        );
+      });
     };
 
     const onMouseUp = () => {
-      dragStateRef.current = null;
+      if (dragStateRef.current) {
+        dragStateRef.current = null;
+        document.body.style.userSelect = "";
+        document.body.style.cursor = "";
+      }
+      if (rafId !== null) {
+        cancelAnimationFrame(rafId);
+        rafId = null;
+      }
     };
 
     window.addEventListener("mousemove", onMouseMove);
@@ -526,6 +549,11 @@ export default function App() {
     return () => {
       window.removeEventListener("mousemove", onMouseMove);
       window.removeEventListener("mouseup", onMouseUp);
+      if (rafId !== null) {
+        cancelAnimationFrame(rafId);
+      }
+      document.body.style.userSelect = "";
+      document.body.style.cursor = "";
     };
   }, []);
 
@@ -868,6 +896,48 @@ export default function App() {
     }
   }
 
+  async function closeOtherTabs(keptTabId: string) {
+    const tabsToClose = tabsRef.current.filter((tab) => tab.id !== keptTabId);
+    await Promise.all(
+      tabsToClose.flatMap((tab) =>
+        tab.panes.map((pane) =>
+          closeSession(pane.sessionId).catch((error) => {
+            console.error("Failed to close pane session", error);
+            return undefined;
+          }),
+        ),
+      ),
+    );
+    const kept = tabsRef.current.filter((tab) => tab.id === keptTabId);
+    tabsRef.current = kept;
+    setTabs(kept);
+    setActiveTabId(keptTabId);
+  }
+
+  async function closeTabsToRight(fromTabId: string) {
+    const index = tabsRef.current.findIndex((tab) => tab.id === fromTabId);
+    if (index < 0 || index >= tabsRef.current.length - 1) {
+      return;
+    }
+    const tabsToClose = tabsRef.current.slice(index + 1);
+    await Promise.all(
+      tabsToClose.flatMap((tab) =>
+        tab.panes.map((pane) =>
+          closeSession(pane.sessionId).catch((error) => {
+            console.error("Failed to close pane session", error);
+            return undefined;
+          }),
+        ),
+      ),
+    );
+    const kept = tabsRef.current.slice(0, index + 1);
+    tabsRef.current = kept;
+    setTabs(kept);
+    if (!kept.some((tab) => tab.id === activeTabIdRef.current)) {
+      setActiveTabId(fromTabId);
+    }
+  }
+
   const updatePaneTitle = useCallback((sessionId: string, nextTitle: string) => {
     const normalized = nextTitle.trim();
     if (!normalized) {
@@ -1092,7 +1162,10 @@ export default function App() {
               activeTabId={activeTabId}
               onSelect={setActiveTabId}
               onClose={(tabId) => void closeTab(tabId)}
+              onCloseOthers={(tabId) => void closeOtherTabs(tabId)}
+              onCloseToRight={(tabId) => void closeTabsToRight(tabId)}
               onReorder={reorderTabs}
+              onNewTab={() => void openTab(selectedProfileId, profiles, settings.workspaceRoot || null)}
             />
 
             <section className="workspace-frame">

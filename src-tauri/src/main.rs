@@ -127,6 +127,38 @@ async fn set_remote_shareable(
     Ok(())
 }
 
+struct GlobalLockGuard(windows_sys::Win32::Foundation::HANDLE);
+impl Drop for GlobalLockGuard {
+    fn drop(&mut self) {
+        unsafe {
+            GlobalUnlock(self.0 as *mut _);
+        }
+    }
+}
+
+fn clean_stale_temp_images() {
+    let temp_dir = std::env::temp_dir();
+    let max_age = Duration::from_secs(24 * 3600);
+    let now = std::time::SystemTime::now();
+    if let Ok(entries) = std::fs::read_dir(temp_dir) {
+        for entry in entries.flatten() {
+            let file_name = entry.file_name();
+            let name_str = file_name.to_string_lossy();
+            if name_str.starts_with("slateterm_img_") {
+                if let Ok(metadata) = entry.metadata() {
+                    if let Ok(modified) = metadata.modified() {
+                        if let Ok(age) = now.duration_since(modified) {
+                            if age > max_age {
+                                let _ = std::fs::remove_file(entry.path());
+                            }
+                        }
+                    }
+                }
+            }
+        }
+    }
+}
+
 fn temp_image_path(extension: &str) -> Result<std::path::PathBuf, String> {
     use std::time::{SystemTime, UNIX_EPOCH};
     let timestamp = SystemTime::now()
@@ -476,13 +508,13 @@ async fn read_clipboard_text() -> Result<String, String> {
         if pointer.is_null() {
             return Err("Could not access clipboard text".into());
         }
+        let _guard = GlobalLockGuard(handle as *mut _);
         let wide = pointer as *const u16;
         let mut length = 0usize;
         while *wide.add(length) != 0 {
             length += 1;
         }
         let text = String::from_utf16_lossy(std::slice::from_raw_parts(wide, length));
-        GlobalUnlock(handle as *mut _);
         Ok(text)
     })
 }
@@ -524,10 +556,23 @@ async fn read_clipboard_image() -> Result<Option<String>, String> {
         if pointer.is_null() {
             return Err("Could not access clipboard image".into());
         }
+        let _guard = GlobalLockGuard(handle as *mut _);
         let dib = std::slice::from_raw_parts(pointer as *const u8, size);
-        let header_size = u32::from_le_bytes(dib[0..4].try_into().unwrap()) as usize;
-        let bit_count = u16::from_le_bytes(dib[14..16].try_into().unwrap()) as usize;
-        let colors_used = u32::from_le_bytes(dib[32..36].try_into().unwrap()) as usize;
+        let header_size = dib
+            .get(0..4)
+            .and_then(|bytes| bytes.try_into().ok())
+            .map(u32::from_le_bytes)
+            .ok_or_else(|| "Invalid DIB header size".to_string())? as usize;
+        let bit_count = dib
+            .get(14..16)
+            .and_then(|bytes| bytes.try_into().ok())
+            .map(u16::from_le_bytes)
+            .ok_or_else(|| "Invalid DIB bit count".to_string())? as usize;
+        let colors_used = dib
+            .get(32..36)
+            .and_then(|bytes| bytes.try_into().ok())
+            .map(u32::from_le_bytes)
+            .unwrap_or(0) as usize;
         let palette_entries = if colors_used > 0 {
             colors_used
         } else if bit_count <= 8 {
@@ -548,7 +593,7 @@ async fn read_clipboard_image() -> Result<Option<String>, String> {
         bitmap.extend_from_slice(&[0u8; 4]);
         bitmap.extend_from_slice(&(pixel_offset as u32).to_le_bytes());
         bitmap.extend_from_slice(dib);
-        GlobalUnlock(handle as *mut _);
+        drop(_guard);
 
         let file_path = temp_image_path("bmp")?;
         std::fs::write(&file_path, bitmap).map_err(|error| error.to_string())?;
@@ -606,6 +651,9 @@ fn main() {
         })
         .setup(|app| {
             app.state::<AppState>().remote.set_app(app.handle().clone());
+            thread::spawn(|| {
+                clean_stale_temp_images();
+            });
             if let Some(window) = app.get_webview_window("main") {
                 if let Some(icon) = app.default_window_icon().cloned() {
                     if let Err(error) = window.set_icon(icon) {

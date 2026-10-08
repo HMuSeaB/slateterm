@@ -1,5 +1,5 @@
 import { listen } from "@tauri-apps/api/event";
-import { memo, useEffect, useRef, useState } from "react";
+import { memo, useEffect, useMemo, useRef, useState } from "react";
 import { FitAddon } from "@xterm/addon-fit";
 import { SearchAddon } from "@xterm/addon-search";
 import { WebLinksAddon } from "@xterm/addon-web-links";
@@ -73,6 +73,7 @@ type TerminalBinding = {
   terminal: Terminal;
   fitAddon: FitAddon;
   searchAddon: SearchAddon;
+  webglAddon?: WebglAddon;
   lastCols: number;
   lastRows: number;
 };
@@ -91,7 +92,7 @@ type PathCompletion = {
 };
 
 const CLAUDE_IMAGE_ATTACH_SEQUENCE = "\x1bv";
-const MAX_COMMAND_BLOCK_OUTPUT = 1_000_000;
+const MAX_COMMAND_BLOCK_OUTPUT = 100_000;
 
 function isClaudeCommand(command: string) {
   const normalized = command.trim().toLowerCase();
@@ -764,8 +765,10 @@ function TerminalPane({
     terminal.loadAddon(searchAddon);
     // GPU renderer with automatic fallback to the DOM renderer on context loss
     // or when WebGL is unavailable.
+    let loadedWebgl: WebglAddon | undefined;
     try {
       terminal.loadAddon(webglAddon);
+      loadedWebgl = webglAddon;
     } catch {
       webglAddon.dispose();
     }
@@ -775,6 +778,7 @@ function TerminalPane({
       terminal,
       fitAddon,
       searchAddon,
+      webglAddon: loadedWebgl,
       lastCols: 0,
       lastRows: 0,
     };
@@ -970,6 +974,21 @@ function TerminalPane({
         // GPU context loss. A pane teardown must never escalate into a whole-app
         // error screen, so the failure is contained and logged instead.
         try {
+          binding.webglAddon?.dispose();
+        } catch (error) {
+          console.warn("SlateTerm: webgl teardown failed", error);
+        }
+        try {
+          binding.fitAddon.dispose();
+        } catch (error) {
+          console.warn("SlateTerm: fitAddon teardown failed", error);
+        }
+        try {
+          binding.searchAddon.dispose();
+        } catch (error) {
+          console.warn("SlateTerm: searchAddon teardown failed", error);
+        }
+        try {
           binding.terminal.dispose();
         } catch (error) {
           console.warn("SlateTerm: terminal teardown failed", error);
@@ -1139,13 +1158,13 @@ function TerminalPane({
     return () => {
       mounted = false;
       idleWatcher.dispose();
-      void unlistenRemote.then((fn) => fn());
-      void unlistenOutput.then((fn) => fn());
-      void unlistenExit.then((fn) => fn());
-      void unlistenError.then((fn) => fn());
-      void unlistenTitle.then((fn) => fn());
-      void unlistenCwd.then((fn) => fn());
-      void unlistenBlock.then((fn) => fn());
+      void unlistenRemote.then((fn) => fn()).catch(() => {});
+      void unlistenOutput.then((fn) => fn()).catch(() => {});
+      void unlistenExit.then((fn) => fn()).catch(() => {});
+      void unlistenError.then((fn) => fn()).catch(() => {});
+      void unlistenTitle.then((fn) => fn()).catch(() => {});
+      void unlistenCwd.then((fn) => fn()).catch(() => {});
+      void unlistenBlock.then((fn) => fn()).catch(() => {});
     };
   }, [sessionId]);
 
@@ -1306,40 +1325,22 @@ function TerminalPane({
               <button type="button" aria-label="Close command blocks" onClick={() => setBlocksOpen(false)}>×</button>
             </header>
             <div className="command-block-list">
-              {[...commandBlocks].reverse().map((block) => {
-                const collapsed = collapsedBlocks[block.id] ?? block.status === "finished";
-                const cleanOutput = block.output.replace(/\x1b(?:\[[0-?]*[ -/]*[@-~]|\][^\x07]*(?:\x07|\x1b\\))/g, "").trim();
-                return (
-                  <article key={block.id} className={`command-block is-${block.status}`}>
-                    <header>
-                      <button
-                        type="button"
-                        className="command-block-collapse"
-                        onClick={() => setCollapsedBlocks((current) => ({ ...current, [block.id]: !collapsed }))}
-                        aria-label={collapsed ? "Expand command output" : "Collapse command output"}
-                      >
-                        {collapsed ? "+" : "−"}
-                      </button>
-                      <code>{block.command || "Command"}</code>
-                      <span className={`command-block-result ${block.exitCode === 0 ? "is-success" : block.status === "running" ? "is-running" : "is-error"}`}>
-                        {block.status === "running" ? "running" : block.exitCode === null ? "done" : `exit ${block.exitCode}`}
-                      </span>
-                    </header>
-                    {!collapsed && (
-                      <>
-                        {block.cwd && <div className="command-block-cwd">{block.cwd}</div>}
-                        <pre>{cleanOutput || "No output"}</pre>
-                        {block.outputTruncated && <div className="command-block-truncated">Output limited to 1,000,000 characters. Full output remains in the terminal scrollback.</div>}
-                      </>
-                    )}
-                    <footer>
-                      <button type="button" onClick={() => copyBlockText(block.command, "Command")}>Copy command</button>
-                      <button type="button" disabled={!cleanOutput} onClick={() => copyBlockText(cleanOutput, "Output")}>Copy output</button>
-                      <button type="button" onClick={() => rerunBlock(block.command)}>Run again</button>
-                    </footer>
-                  </article>
-                );
-              })}
+              {[...commandBlocks].reverse().map((block) => (
+                <CommandBlockItem
+                  key={block.id}
+                  block={block}
+                  collapsed={collapsedBlocks[block.id] ?? block.status === "finished"}
+                  onToggleCollapse={(id) =>
+                    setCollapsedBlocks((current) => ({
+                      ...current,
+                      [id]: !(current[id] ?? block.status === "finished"),
+                    }))
+                  }
+                  onCopyCommand={(cmd) => copyBlockText(cmd, "Command")}
+                  onCopyOutput={(output) => copyBlockText(output, "Output")}
+                  onRerun={rerunBlock}
+                />
+              ))}
             </div>
           </aside>
         )}
@@ -1349,5 +1350,100 @@ function TerminalPane({
     </section>
   );
 }
+
+type CommandBlockItemProps = {
+  block: CommandBlock;
+  collapsed: boolean;
+  onToggleCollapse: (id: string) => void;
+  onCopyCommand: (cmd: string) => void;
+  onCopyOutput: (output: string) => void;
+  onRerun: (cmd: string) => void;
+};
+
+const CommandBlockItem = memo(function CommandBlockItem({
+  block,
+  collapsed,
+  onToggleCollapse,
+  onCopyCommand,
+  onCopyOutput,
+  onRerun,
+}: CommandBlockItemProps) {
+  const cleanOutput = useMemo(() => {
+    if (collapsed) {
+      return "";
+    }
+    return block.output
+      .replace(/\x1b(?:\[[0-?]*[ -/]*[@-~]|\][^\x07]*(?:\x07|\x1b\\))/g, "")
+      .trim();
+  }, [block.output, collapsed]);
+
+  const handleCopyOutput = () => {
+    const textToCopy =
+      cleanOutput ||
+      block.output
+        .replace(/\x1b(?:\[[0-?]*[ -/]*[@-~]|\][^\x07]*(?:\x07|\x1b\\))/g, "")
+        .trim();
+    if (textToCopy) {
+      onCopyOutput(textToCopy);
+    }
+  };
+
+  return (
+    <article className={`command-block is-${block.status}`}>
+      <header>
+        <button
+          type="button"
+          className="command-block-collapse"
+          onClick={() => onToggleCollapse(block.id)}
+          aria-label={collapsed ? "Expand command output" : "Collapse command output"}
+        >
+          {collapsed ? "+" : "−"}
+        </button>
+        <code>{block.command || "Command"}</code>
+        <span
+          className={`command-block-result ${
+            block.exitCode === 0
+              ? "is-success"
+              : block.status === "running"
+              ? "is-running"
+              : "is-error"
+          }`}
+        >
+          {block.status === "running"
+            ? "running"
+            : block.exitCode === null
+            ? "done"
+            : `exit ${block.exitCode}`}
+        </span>
+      </header>
+      {!collapsed && (
+        <>
+          {block.cwd && <div className="command-block-cwd">{block.cwd}</div>}
+          <pre>{cleanOutput || "No output"}</pre>
+          {block.outputTruncated && (
+            <div className="command-block-truncated">
+              Output limited to 100,000 characters. Full output remains in the terminal scrollback.
+            </div>
+          )}
+        </>
+      )}
+      <footer>
+        <button type="button" onClick={() => onCopyCommand(block.command)}>
+          Copy command
+        </button>
+        <button
+          type="button"
+          disabled={!block.output.trim()}
+          onClick={handleCopyOutput}
+        >
+          Copy output
+        </button>
+        <button type="button" onClick={() => onRerun(block.command)}>
+          Run again
+        </button>
+      </footer>
+    </article>
+  );
+});
 
 export default memo(TerminalPane);

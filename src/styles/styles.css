@@ -974,6 +974,59 @@ button {
   background: rgba(239, 107, 97, 0.09);
 }
 
+.tabbar-new-tab-button {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 28px;
+  height: 28px;
+  margin: auto 4px auto 6px;
+  padding: 0;
+  border: 1px solid transparent;
+  border-radius: 8px;
+  color: rgba(236, 226, 208, 0.65);
+  font-size: 17px;
+  line-height: 1;
+  background: transparent;
+  transition: all 140ms ease;
+  flex-shrink: 0;
+}
+
+.tabbar-new-tab-button:hover {
+  color: #fff;
+  border-color: rgba(255, 236, 205, 0.12);
+  background: rgba(255, 255, 255, 0.08);
+  box-shadow: 0 2px 6px rgba(0, 0, 0, 0.2);
+}
+
+.tabbar-new-tab-button:active {
+  transform: scale(0.94);
+  background: rgba(255, 255, 255, 0.12);
+}
+
+.theme-paper .tabbar-new-tab-button {
+  color: rgba(44, 38, 29, 0.65);
+}
+
+.theme-paper .tabbar-new-tab-button:hover {
+  color: #2c261d;
+  border-color: rgba(48, 43, 34, 0.12);
+  background: rgba(48, 43, 34, 0.06);
+}
+
+.tab-context-menu-divider {
+  width: 100%;
+  height: 1px;
+  margin: 3px 0;
+  padding: 0;
+  border: 0;
+  background: rgba(255, 255, 255, 0.07);
+}
+
+.theme-paper .tab-context-menu-divider {
+  background: rgba(48, 43, 34, 0.1);
+}
+
 .tab-context-menu {
   position: fixed;
   z-index: 260;
@@ -1260,10 +1313,57 @@ button {
 }
 
 .splitter {
+  position: relative;
   width: 10px;
   cursor: col-resize;
   background:
-    linear-gradient(180deg, transparent 0%, rgba(224, 154, 62, 0.18) 50%, transparent 100%);
+    linear-gradient(180deg, transparent 0%, rgba(224, 154, 62, 0.14) 50%, transparent 100%);
+  transition: background 150ms ease;
+}
+
+.splitter::after {
+  content: "";
+  position: absolute;
+  top: 50%;
+  left: 50%;
+  transform: translate(-50%, -50%);
+  width: 2px;
+  height: 28px;
+  border-radius: 2px;
+  background: rgba(224, 154, 62, 0.35);
+  opacity: 0.6;
+  transition: opacity 150ms ease, height 150ms ease;
+}
+
+.splitter:hover {
+  background:
+    linear-gradient(180deg, transparent 0%, rgba(224, 154, 62, 0.32) 50%, transparent 100%);
+}
+
+.splitter:hover::after {
+  opacity: 1;
+  height: 48px;
+  background: rgba(224, 154, 62, 0.8);
+}
+
+.theme-paper .splitter {
+  background:
+    linear-gradient(180deg, transparent 0%, rgba(38, 143, 137, 0.16) 50%, transparent 100%);
+}
+
+.theme-paper .splitter::after {
+  background: rgba(38, 143, 137, 0.4);
+}
+
+.theme-paper .splitter:hover {
+  background:
+    linear-gradient(180deg, transparent 0%, rgba(38, 143, 137, 0.32) 50%, transparent 100%);
+}
+
+.theme-paper .splitter:hover::after {
+  height: 48px;
+  opacity: 1;
+  background: rgba(38, 143, 137, 0.8);
 }
 
 .terminal-shell {
