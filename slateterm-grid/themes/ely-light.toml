@@ -1,0 +1,23 @@
+# SlateTerm 暖纸白：对应 .theme-paper
+background = #f7f3e8
+foreground = #2f2b22
+cursor-color = #145f5c
+cursor-text = #f7f3e8
+selection-background = #145f5c
+selection-foreground = #f7f3e8
+palette = 0=#26211d
+palette = 1=#a04237
+palette = 2=#4c7a53
+palette = 3=#92662b
+palette = 4=#3f6392
+palette = 5=#874667
+palette = 6=#1c6a67
+palette = 7=#d7cfbc
+palette = 8=#6d6657
+palette = 9=#d55b4e
+palette = 10=#5f9667
+palette = 11=#b78536
+palette = 12=#5983be
+palette = 13=#ad5b87
+palette = 14=#2d918c
+palette = 15=#6f695c

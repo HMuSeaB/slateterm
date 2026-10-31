@@ -1,0 +1,23 @@
+# SlateTerm 暖琥珀暗色：与 src/styles/styles.css 的 :root 同源
+background = #191410
+foreground = #ece2d0
+cursor-color = #f0a63c
+cursor-text = #191410
+selection-background = #e09a3e
+selection-foreground = #191410
+palette = 0=#463b2e
+palette = 1=#d9694f
+palette = 2=#9aa861
+palette = 3=#dda03f
+palette = 4=#7e9dc4
+palette = 5=#c176a8
+palette = 6=#c98a4e
+palette = 7=#cdc0aa
+palette = 8=#6f6455
+palette = 9=#ef8270
+palette = 10=#b8c47c
+palette = 11=#f0bc5e
+palette = 12=#9ab8de
+palette = 13=#dc94c2
+palette = 14=#e5a869
+palette = 15=#fdf6e9

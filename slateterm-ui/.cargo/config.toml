@@ -1,0 +1,7 @@
+[net]
+git-fetch-with-cli = true
+retry = 2
+[source.crates-io]
+replace-with = "mirror"
+[source.mirror]
+registry = "sparse+https://rsproxy.cn/index/"

@@ -1,0 +1,17 @@
+[package]
+name = "slateterm-grid"
+version = "0.1.0"
+edition = "2024"
+license = "MIT"
+description = "Self-drawn terminal grid: alacritty_terminal for VT, our own rasterizer for pixels"
+publish = false
+
+[dependencies]
+alacritty_terminal = "0.26.0"
+vte = "0.15.0"
+tiny-skia = "0.12.0"
+fontdue = "0.9.5"
+portable-pty = "0.8.1"
+image = { version = "0.25", default-features = false, features = ["png"] }
+
+[workspace]
