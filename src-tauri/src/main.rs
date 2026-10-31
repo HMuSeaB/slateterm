@@ -1,11 +1,13 @@
 #![cfg_attr(not(debug_assertions), windows_subsystem = "windows")]
 
+mod grid;
 mod models;
 mod pty;
 mod remote;
 mod remote_protocol;
 mod settings;
 
+use grid::GridHub;
 use models::{
     default_profiles, shell_profiles, CreateSessionResponse, FileEntry, FilePreview, Profile,
     ProxyConfig, Settings,
@@ -39,6 +41,94 @@ struct AppState {
     remote: Arc<RemoteHub>,
     profiles: Vec<Profile>,
     shell_profiles: Vec<Profile>,
+    grid: Arc<GridHub>,
+}
+
+// ---- 自绘终端网格 ----
+//
+// 这套命令与 PTY 并行存在：pty.rs 仍管进程与字节流，
+// grid 只把同一批字节再解析一份，按需出位图。
+// 因此 xterm.js 与自绘网格可以同时在场，前端切换渲染器不影响会话。
+
+#[tauri::command]
+fn grid_create_session(state: State<AppState>, session_id: String, cols: usize, rows: usize) -> Result<(), String> {
+    state.grid.create(&session_id, cols, rows)
+}
+
+/// 把 PTY 的原始字节喂给网格。
+/// 前端拿到 `terminal/output/<id>` 事件后调用，参数是 base64，
+/// 避免 JSON 数组传输 8k 字节时的体积膨胀。
+#[tauri::command]
+fn grid_feed(state: State<AppState>, session_id: String, base64: String) -> Result<(), String> {
+    let bytes = base64_decode(&base64)?;
+    state.grid.feed(&session_id, &bytes);
+    Ok(())
+}
+
+#[tauri::command]
+fn grid_resize(state: State<AppState>, session_id: String, cols: usize, rows: usize) -> Result<(), String> {
+    state.grid.resize(&session_id, cols, rows);
+    Ok(())
+}
+
+#[tauri::command]
+fn grid_close(state: State<AppState>, session_id: String) {
+    state.grid.close(&session_id);
+}
+
+/// 取一帧。返回 PNG 编码的字节（base64），前端直接塞进 ImageBitmap。
+#[tauri::command]
+fn grid_frame(state: State<AppState>, session_id: String, max_width: u32) -> Result<grid::FramePayload, String> {
+    let frame = state.grid.frame(&session_id, max_width)?;
+    grid::encode_png(&frame)
+}
+
+#[tauri::command]
+fn grid_list_themes(state: State<AppState>) -> Result<Vec<grid::ThemeEntry>, String> {
+    Ok(state
+        .grid
+        .themes()?
+        .into_iter()
+        .map(|(id, name, light)| grid::ThemeEntry { id, name, light })
+        .collect())
+}
+
+#[tauri::command]
+fn grid_set_theme(state: State<AppState>, id: String) -> Result<(), String> {
+    state.grid.set_theme(&id)
+}
+
+#[tauri::command]
+fn grid_set_look(state: State<AppState>, font_size: f32, line_height: f32, padding: i32) {
+    state.grid.set_look(font_size, line_height, padding);
+}
+
+/// 标准 base64 解码，省一个依赖。
+fn base64_decode(input: &str) -> Result<Vec<u8>, String> {
+    const TABLE: &[u8; 64] = b"ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/";
+    let mut rev = [255u8; 256];
+    for (i, c) in TABLE.iter().enumerate() {
+        rev[*c as usize] = i as u8;
+    }
+    let mut out = Vec::with_capacity(input.len() * 3 / 4);
+    let mut acc = 0u32;
+    let mut bits = 0u32;
+    for b in input.bytes() {
+        if b == b'=' || b == b'\n' || b == b'\r' {
+            continue;
+        }
+        let v = rev[b as usize];
+        if v == 255 {
+            return Err(format!("非法 base64 字符: {}", b as char));
+        }
+        acc = (acc << 6) | v as u32;
+        bits += 6;
+        if bits >= 8 {
+            bits -= 8;
+            out.push((acc >> bits) as u8);
+        }
+    }
+    Ok(out)
 }
 
 #[tauri::command]
@@ -648,6 +738,7 @@ fn main() {
             remote,
             profiles,
             shell_profiles,
+            grid: Arc::new(GridHub::new()),
         })
         .setup(|app| {
             app.state::<AppState>().remote.set_app(app.handle().clone());
@@ -678,6 +769,14 @@ fn main() {
             select_workspace_folder,
             list_directory,
             read_text_file,
+            grid_create_session,
+            grid_feed,
+            grid_resize,
+            grid_close,
+            grid_frame,
+            grid_list_themes,
+            grid_set_theme,
+            grid_set_look,
             create_session,
             write_input,
             resize_session,
