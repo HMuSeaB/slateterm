@@ -335,11 +335,17 @@ export class GridTerminal {
       if (this.disposed || !this.canvas) {
         return;
       }
+      const previousCellWidth = this.metrics.cellWidth;
       this.metrics = {
         cellWidth: frame.cellWidth,
         cellHeight: frame.cellHeight,
         padding: frame.padding,
       };
+      // 字号变了但容器没变，ResizeObserver 不会触发，格数还按旧字宽算，
+      // 画面就会被拉伸。这里主动重算一次。
+      if (Math.abs(previousCellWidth - frame.cellWidth) > 0.01) {
+        this.handleContainerResize();
+      }
       this.frameCols = frame.cols;
       this.frameRows = frame.rows;
       this.bracketedPaste = frame.bracketedPaste;
