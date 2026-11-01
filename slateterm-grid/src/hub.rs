@@ -11,7 +11,7 @@ use std::path::PathBuf;
 use std::sync::{Arc, Mutex};
 
 use crate::font::FontPair;
-use crate::render::{Look, Terminal, frame_size, render};
+use crate::render::{Look, MatchSpan, Overlay, Terminal, frame_size, render};
 use crate::theme;
 
 /// 一帧的原始数据（尚未编码）。
@@ -26,6 +26,24 @@ pub struct GridFrame {
     pub cell_width: f32,
     pub cell_height: f32,
     pub padding: f32,
+    /// 已在回滚区滚了多少行，0 表示贴底
+    pub display_offset: usize,
+    pub history_size: usize,
+}
+
+/// 滚动状态。前端据此画滚动条。
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct ScrollInfo {
+    pub offset: usize,
+    pub history: usize,
+    pub rows: usize,
+}
+
+/// 搜索结果。前端只需要数量与当前聚焦的序号。
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct SearchInfo {
+    pub count: usize,
+    pub active: Option<usize>,
 }
 
 pub struct HubOptions {
@@ -59,8 +77,18 @@ struct FontPaths {
     fallback: PathBuf,
 }
 
+/// 单个会话的网格状态。
+///
+/// 搜索命中放在这里而不是全局：两个标签页各自搜各自的词，
+/// 切换标签时高亮不会串。
+struct Session {
+    term: Terminal,
+    matches: Vec<MatchSpan>,
+    active: Option<usize>,
+}
+
 struct Inner {
-    sessions: HashMap<String, Terminal>,
+    sessions: HashMap<String, Session>,
     fonts: Option<FontPair>,
     theme: Option<theme::Theme>,
     look: Look,
@@ -99,36 +127,41 @@ impl GridHub {
 
     pub fn create(&self, session_id: &str, cols: usize, rows: usize) -> Result<(), String> {
         let mut inner = self.inner.lock().map_err(|_| "锁被污染".to_string())?;
-        inner.sessions.insert(session_id.to_string(), Terminal::new(cols, rows));
+        inner.sessions.insert(session_id.to_string(), new_session(cols, rows));
         Ok(())
     }
 
     /// 会话已存在则复用，不重建——前端可能因为重渲染重复调用 create。
     pub fn ensure(&self, session_id: &str, cols: usize, rows: usize) -> Result<(), String> {
         let mut inner = self.inner.lock().map_err(|_| "锁被污染".to_string())?;
-        if inner.sessions.contains_key(session_id) {
-            if let Some(t) = inner.sessions.get_mut(session_id) {
-                t.resize(cols, rows);
-            }
+        if let Some(s) = inner.sessions.get_mut(session_id) {
+            s.term.resize(cols, rows);
             return Ok(());
         }
-        inner.sessions.insert(session_id.to_string(), Terminal::new(cols, rows));
+        inner.sessions.insert(session_id.to_string(), new_session(cols, rows));
         Ok(())
     }
 
     pub fn feed(&self, session_id: &str, bytes: &[u8]) {
         if let Ok(mut inner) = self.inner.lock()
-            && let Some(t) = inner.sessions.get_mut(session_id)
+            && let Some(s) = inner.sessions.get_mut(session_id)
         {
-            t.feed(bytes);
+            s.term.feed(bytes);
+            // 新输出进来，旧的命中位置已经失效，直接清掉比留着错位高亮好
+            if !s.matches.is_empty() {
+                s.matches.clear();
+                s.active = None;
+            }
         }
     }
 
     pub fn resize(&self, session_id: &str, cols: usize, rows: usize) {
         if let Ok(mut inner) = self.inner.lock()
-            && let Some(t) = inner.sessions.get_mut(session_id)
+            && let Some(s) = inner.sessions.get_mut(session_id)
         {
-            t.resize(cols, rows);
+            s.term.resize(cols, rows);
+            s.matches.clear();
+            s.active = None;
         }
     }
 
@@ -171,6 +204,104 @@ impl GridHub {
             .collect()
     }
 
+    // ---- 滚动 ----
+
+    /// `delta` 正数向上翻。返回滚动后的状态。
+    pub fn scroll(&self, session_id: &str, delta: i32) -> Result<ScrollInfo, String> {
+        self.with_session(session_id, |s| {
+            s.term.scroll_lines(delta);
+            scroll_info(&s.term)
+        })
+    }
+
+    pub fn scroll_page(&self, session_id: &str, up: bool) -> Result<ScrollInfo, String> {
+        self.with_session(session_id, |s| {
+            s.term.scroll_page(up);
+            scroll_info(&s.term)
+        })
+    }
+
+    pub fn scroll_to(&self, session_id: &str, edge: &str) -> Result<ScrollInfo, String> {
+        self.with_session(session_id, |s| {
+            match edge {
+                "top" => s.term.scroll_to_top(),
+                _ => s.term.scroll_to_bottom(),
+            }
+            scroll_info(&s.term)
+        })
+    }
+
+    pub fn scroll_info(&self, session_id: &str) -> Result<ScrollInfo, String> {
+        self.with_session(session_id, |s| scroll_info(&s.term))
+    }
+
+    // ---- 选区 ----
+
+    /// 设置选区。坐标是缓冲坐标（行可负），`kind` 为 simple/block/semantic/lines。
+    pub fn select(
+        &self,
+        session_id: &str,
+        kind: &str,
+        start: (i32, i32),
+        end: (i32, i32),
+    ) -> Result<(), String> {
+        self.with_session(session_id, |s| s.term.set_selection(kind, start, end))
+    }
+
+    pub fn clear_selection(&self, session_id: &str) -> Result<(), String> {
+        self.with_session(session_id, |s| s.term.clear_selection())
+    }
+
+    /// 选区文本。没有选区时返回 `None`（而不是空串），前端据此决定是否发 Ctrl+C。
+    pub fn selection_text(&self, session_id: &str) -> Result<Option<String>, String> {
+        self.with_session(session_id, |s| s.term.selection_text())
+    }
+
+    // ---- 搜索 ----
+
+    /// 从新搜索。命中后自动滚到第一条。
+    pub fn search(
+        &self,
+        session_id: &str,
+        needle: &str,
+        case_sensitive: bool,
+        limit: usize,
+    ) -> Result<SearchInfo, String> {
+        self.with_session(session_id, |s| {
+            s.matches = s.term.search(needle, case_sensitive, limit);
+            s.active = if s.matches.is_empty() { None } else { Some(0) };
+            reveal_active(s);
+            SearchInfo { count: s.matches.len(), active: s.active }
+        })
+    }
+
+    /// 在已有命中之间前后跳，并把它滚进视野。
+    pub fn search_step(&self, session_id: &str, forward: bool) -> Result<SearchInfo, String> {
+        self.with_session(session_id, |s| {
+            if s.matches.is_empty() {
+                return SearchInfo { count: 0, active: None };
+            }
+            let count = s.matches.len();
+            let next = match s.active {
+                None => 0,
+                Some(i) if forward => (i + 1) % count,
+                Some(i) => (i + count - 1) % count,
+            };
+            s.active = Some(next);
+            reveal_active(s);
+            SearchInfo { count, active: s.active }
+        })
+    }
+
+    pub fn clear_search(&self, session_id: &str) -> Result<(), String> {
+        self.with_session(session_id, |s| {
+            s.matches.clear();
+            s.active = None;
+        })
+    }
+
+    // ---- 渲染 ----
+
     /// 渲染一帧。`max_width` 为 0 表示按终端格数自然尺寸输出。
     pub fn frame(&self, session_id: &str, max_width: u32) -> Result<GridFrame, String> {
         let mut inner = self.inner.lock().map_err(|_| "锁被污染".to_string())?;
@@ -190,9 +321,10 @@ impl GridHub {
         }
 
         let Inner { sessions, fonts, theme, look } = &mut *inner;
-        let term = sessions.get(session_id).ok_or_else(|| format!("会话 {session_id} 不存在"))?;
+        let session = sessions.get(session_id).ok_or_else(|| format!("会话 {session_id} 不存在"))?;
         let fonts = fonts.as_mut().ok_or("字体未就绪")?;
         let theme = theme.as_ref().ok_or("主题未就绪")?;
+        let term = &session.term;
 
         let (mut w, mut h) = frame_size(term.cols(), term.rows(), fonts, look);
         // 前端传了可用宽度时按比例缩，保证不横向溢出
@@ -202,7 +334,8 @@ impl GridHub {
             h = (h as f32 * k).max(1.0) as usize;
         }
 
-        let frame = render(term.inner(), &theme.palette, fonts, look, w, h);
+        let overlay = Overlay { matches: session.matches.clone(), active: session.active };
+        let frame = render(term.inner(), &theme.palette, fonts, look, w, h, &overlay);
         Ok(GridFrame {
             width: frame.width as u32,
             height: frame.height as u32,
@@ -212,8 +345,42 @@ impl GridHub {
             cell_width: fonts.advance,
             cell_height: fonts.line_height,
             padding: look.padding as f32,
+            display_offset: term.display_offset(),
+            history_size: term.history_size(),
         })
     }
+
+    fn with_session<T>(
+        &self,
+        session_id: &str,
+        f: impl FnOnce(&mut Session) -> T,
+    ) -> Result<T, String> {
+        let mut inner = self.inner.lock().map_err(|_| "锁被污染".to_string())?;
+        let session = inner
+            .sessions
+            .get_mut(session_id)
+            .ok_or_else(|| format!("会话 {session_id} 不存在"))?;
+        Ok(f(session))
+    }
+}
+
+fn new_session(cols: usize, rows: usize) -> Session {
+    Session { term: Terminal::new(cols, rows), matches: Vec::new(), active: None }
+}
+
+fn scroll_info(term: &Terminal) -> ScrollInfo {
+    ScrollInfo { offset: term.display_offset(), history: term.history_size(), rows: term.rows() }
+}
+
+/// 把当前聚焦的命中滚进视野，并让它尽量居中——只滚到边缘的话，
+/// 前后两条上下文都看不见，用户还得再手动找。
+fn reveal_active(session: &mut Session) {
+    let Some(index) = session.active else { return };
+    let Some(m) = session.matches.get(index).copied() else { return };
+    // 居中：先滚到目标行，再往回带半个屏高
+    session.term.scroll_to_line(m.line);
+    let half = (session.term.rows() / 2) as i32;
+    session.term.scroll_lines(-half.min(session.term.display_offset() as i32));
 }
 
 /// 全局单例，由宿主（Tauri 的 managed state）持有。
@@ -345,5 +512,97 @@ mod tests {
         let hub = GridHub::new();
         // 会话不存在时应返回错误而不是 panic
         assert!(hub.frame("missing", 800).is_err());
+    }
+
+    #[test]
+    fn scrollback_keeps_history_and_clamps_at_bottom() {
+        let hub = GridHub::new();
+        hub.create("s1", 20, 4).unwrap();
+        // 输出 20 行，屏幕只有 4 行，剩下的应进回滚区
+        let mut out = Vec::new();
+        for i in 0..20 {
+            out.extend_from_slice(format!("line{i}\r\n").as_bytes());
+        }
+        hub.feed("s1", &out);
+
+        let info = hub.scroll_info("s1").unwrap();
+        assert_eq!(info.offset, 0, "刚输出完应该贴在底部");
+        assert_eq!(info.rows, 4);
+        assert!(info.history >= 15, "回滚区太少: {}", info.history);
+
+        let up = hub.scroll("s1", 5).unwrap();
+        assert_eq!(up.offset, 5);
+        let down = hub.scroll("s1", -100).unwrap();
+        assert_eq!(down.offset, 0, "向下越界必须钳到 0，不能变负数");
+    }
+
+    #[test]
+    fn selection_returns_text_of_selected_cells() {
+        let hub = GridHub::new();
+        hub.create("s1", 20, 4).unwrap();
+        hub.feed("s1", b"hello world\r\nsecond line\r\n");
+
+        hub.select("s1", "simple", (0, 0), (0, 4)).unwrap();
+        let text = hub.selection_text("s1").unwrap().unwrap_or_default();
+        assert_eq!(text, "hello");
+
+        hub.clear_selection("s1").unwrap();
+        assert!(hub.selection_text("s1").unwrap().is_none());
+    }
+
+    #[test]
+    fn search_finds_matches_across_history_and_wraps() {
+        let hub = GridHub::new();
+        hub.create("s1", 20, 4).unwrap();
+        let mut out = Vec::new();
+        for i in 0..10 {
+            out.extend_from_slice(format!("needle {i}\r\n").as_bytes());
+        }
+        hub.feed("s1", &out);
+
+        let found = hub.search("s1", "needle", true, 100).unwrap();
+        assert_eq!(found.count, 10);
+        assert_eq!(found.active, Some(0));
+
+        // 往后跳到底再回绕，不能越界 panic
+        for _ in 0..10 {
+            hub.search_step("s1", true).unwrap();
+        }
+        let back = hub.search_step("s1", true).unwrap();
+        assert_eq!(back.active, Some(1));
+
+        // 搜不到时不应留下 active
+        let none = hub.search("s1", "absent", true, 100).unwrap();
+        assert_eq!(none.count, 0);
+        assert_eq!(none.active, None);
+
+        hub.clear_search("s1").unwrap();
+    }
+
+    #[test]
+    fn search_is_case_insensitive_by_default() {
+        let hub = GridHub::new();
+        hub.create("s1", 20, 4).unwrap();
+        hub.feed("s1", b"HeLLo\r\n");
+
+        assert_eq!(hub.search("s1", "hello", false, 10).unwrap().count, 1);
+        assert_eq!(hub.search("s1", "hello", true, 10).unwrap().count, 0);
+    }
+
+    #[test]
+    fn new_output_invalidates_stale_search_hits() {
+        let hub = GridHub::new();
+        hub.create("s1", 20, 4).unwrap();
+        hub.feed("s1", b"alpha\r\n");
+        assert_eq!(hub.search("s1", "alpha", true, 10).unwrap().count, 1);
+        // 后续输出会移动已有内容，旧列号不再可信
+        hub.feed("s1", b"beta\r\n");
+        assert_eq!(hub.search_info_len("s1"), 0);
+    }
+
+    impl GridHub {
+        fn search_info_len(&self, id: &str) -> usize {
+            self.with_session(id, |s| s.matches.len()).unwrap()
+        }
     }
 }

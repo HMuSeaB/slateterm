@@ -132,7 +132,7 @@ fn main() -> Result<(), String> {
     run_live_session(&mut term, cols, rows)?;
 
     let (tw, th) = frame_size(term.cols(), term.rows(), &fonts, &look);
-    let frame = render(term.inner(), &palette, &mut fonts, &look, tw, th);
+    let frame = render(term.inner(), &palette, &mut fonts, &look, tw, th, &Default::default());
     blit(&mut buf, cw, ch, main_x, term_y, &frame.pixels, frame.width, frame.height);
 
     // 右侧面板

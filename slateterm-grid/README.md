@@ -104,26 +104,42 @@ cargo run --bin overview -- themes out/themes out/all.png 5
 
 已经完成（`src-tauri/src/grid.rs` + `src/lib/gridTerminal.ts`）：
 
-- 8 个 Tauri 命令：`grid_create_session` / `feed` / `resize` / `close` /
-  `frame` / `list_themes` / `set_theme` / `set_look`
+- 17 个 Tauri 命令：`grid_create_session` / `feed` / `resize` / `close` /
+  `frame` / `list_themes` / `set_theme` / `set_look` /
+  `scroll` / `scroll_page` / `scroll_to` /
+  `select` / `clear_selection` / `selection_text` /
+  `search` / `search_step` / `clear_search`
 - `GridTerminal` 伪装成 xterm 的 `Terminal` 接口
-  （`write` / `open` / `dispose` / `onData` / `element` / `focus`），
-  `TerminalPane` 的输入处理、路径附件、命令记录都通过**同一个**
-  `handleTerminalInput` 走，两条渲染路径不会有功能分叉
+  （`write` / `open` / `dispose` / `onData` / `element` / `focus` /
+  `hasSelection` / `getSelection` / `clearSelection` /
+  `attachCustomKeyEventHandler`），
+  `TerminalPane` 的输入处理、路径附件、命令记录、Ctrl+C 复制、Ctrl+F 搜索
+  都通过**同一个** `handleTerminalInput` / `handleKeyDown` 走，
+  两条渲染路径不会有功能分叉
 - 设置面板有 `Terminal Renderer` 下拉，默认仍是 `xterm`
 - `ResizeObserver` → `grid_resize` 回路已接
 - 主题随界面明暗模式映射：`graphite` → `ely-dark`，`paper` → `ely-light`
 
-还没做：
+### 交互
 
-1. **搜索**。`xterm-addon-search` 绑死在 xterm 内部，grid 路径下不可用，
-   界面上会明确提示而不是静默失效。需要 Rust 侧提供 `search(query)` 接口。
-2. **选中与复制**。目前只能整屏重绘，选区和右键菜单还没接。
-   需要 `GridHub` 暴露单元格坐标 → 字符的映射。
-3. **滚动回看**。`alacritty_terminal` 有 scrollback（已设 10000 行），
-   但前端还没有滚轮→`display_offset` 的通路。
+| 功能 | 做法 |
+| --- | --- |
+| 拖选 / 双击选词 | 鼠标坐标换算成**缓冲坐标**（行可负），选区由 `alacritty_terminal::selection` 维护 |
+| 复制 | 走宿主已有的 Ctrl+C 分支，`getSelection()` 读缓存——按键回调里必须是同步的 |
+| 滚动回看 | 滚轮 3 行 / `Shift+PageUp`、`PageDown` 翻页 / `Ctrl+Shift+Home`、`End` 跳两端；滚上去时右侧画位置指示条 |
+| 搜索 | 命中在 Rust 侧算（回滚最多 1 万行，拉回前端再搜等于传两遍文本）；`GridSearch` 对外形如 `SearchAddon`，`runSearch` 统一 `await` |
+| 中文输入 | canvas 不是可编辑元素，输入法不会激活。真正收键的是一个 1×1 透明 textarea，普通按键 `preventDefault` 后转义成终端字节，只有 `compositionend` 的内容才走输入法路径 |
 
-这三件都不影响"看"和"输入"，属于可用性补全。
+**一个已经修掉的坑**：渲染循环原来把 `line < 0` 直接 `continue`，而
+`renderable_content().display_iter` 吐的是**缓冲坐标**——滚上去之后首行必然是负数，
+等于回滚区永远画不出东西。正确做法是 `屏幕行 = 缓冲行 + display_offset`。
+`features.rs` 这张图能直接看出来。
+
+还没做（不影响日常使用）：
+
+1. **右键菜单**（复制/粘贴/清屏）。现在只有键盘快捷键。
+2. **块选区**（Alt+拖动）。`SelectionType::Block` 后端已支持，前端没接。
+3. **超链接点击**。xterm 走 `web-links` addon，grid 需要自己扫文本。
 
 ## 依赖
 

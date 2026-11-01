@@ -105,6 +105,83 @@ fn grid_set_look(state: State<AppState>, font_size: f32, line_height: f32, paddi
     state.grid.set_look(font_size, line_height, padding);
 }
 
+// ---- 滚动回看 ----
+
+/// 滚轮与翻页。`delta` 正数向上翻（更早的内容）。
+#[tauri::command]
+fn grid_scroll(state: State<AppState>, session_id: String, delta: i32) -> Result<grid::ScrollPayload, String> {
+    state.grid.scroll(&session_id, delta).map(Into::into)
+}
+
+#[tauri::command]
+fn grid_scroll_page(state: State<AppState>, session_id: String, up: bool) -> Result<grid::ScrollPayload, String> {
+    state.grid.scroll_page(&session_id, up).map(Into::into)
+}
+
+/// `edge` 取 `top` / `bottom`。
+#[tauri::command]
+fn grid_scroll_to(state: State<AppState>, session_id: String, edge: String) -> Result<grid::ScrollPayload, String> {
+    state.grid.scroll_to(&session_id, &edge).map(Into::into)
+}
+
+// ---- 选区与复制 ----
+
+/// 设置选区。坐标是**缓冲行号**（可负），不是屏幕行——
+/// 这样滚动之后选区跟着文本走，不会错位。
+#[tauri::command]
+#[allow(clippy::too_many_arguments)]
+fn grid_select(
+    state: State<AppState>,
+    session_id: String,
+    kind: String,
+    start_line: i32,
+    start_col: i32,
+    end_line: i32,
+    end_col: i32,
+) -> Result<(), String> {
+    state
+        .grid
+        .select(&session_id, &kind, (start_line, start_col), (end_line, end_col))
+}
+
+#[tauri::command]
+fn grid_clear_selection(state: State<AppState>, session_id: String) -> Result<(), String> {
+    state.grid.clear_selection(&session_id)
+}
+
+/// 选区文本。没有选区时返回 `null`，前端据此决定 Ctrl+C 是复制还是发 SIGINT。
+#[tauri::command]
+fn grid_selection_text(state: State<AppState>, session_id: String) -> Result<Option<String>, String> {
+    state.grid.selection_text(&session_id)
+}
+
+// ---- 搜索 ----
+
+#[tauri::command]
+fn grid_search(
+    state: State<AppState>,
+    session_id: String,
+    needle: String,
+    case_sensitive: bool,
+    limit: usize,
+) -> Result<grid::SearchPayload, String> {
+    state
+        .grid
+        .search(&session_id, &needle, case_sensitive, limit.max(1))
+        .map(Into::into)
+}
+
+/// 在已有命中之间前后跳。
+#[tauri::command]
+fn grid_search_step(state: State<AppState>, session_id: String, forward: bool) -> Result<grid::SearchPayload, String> {
+    state.grid.search_step(&session_id, forward).map(Into::into)
+}
+
+#[tauri::command]
+fn grid_clear_search(state: State<AppState>, session_id: String) -> Result<(), String> {
+    state.grid.clear_search(&session_id)
+}
+
 #[tauri::command]
 fn list_profiles(state: State<AppState>) -> Vec<Profile> {
     state.profiles.clone()
@@ -751,6 +828,15 @@ fn main() {
             grid_list_themes,
             grid_set_theme,
             grid_set_look,
+            grid_scroll,
+            grid_scroll_page,
+            grid_scroll_to,
+            grid_select,
+            grid_clear_selection,
+            grid_selection_text,
+            grid_search,
+            grid_search_step,
+            grid_clear_search,
             create_session,
             write_input,
             resize_session,

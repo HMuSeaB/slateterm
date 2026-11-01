@@ -47,7 +47,7 @@ fn main() -> Result<(), String> {
         term.feed(sheet.as_bytes());
 
         let (w, h) = frame_size(term.cols(), term.rows(), &fonts, &look);
-        let frame = render(term.inner(), &t.palette, &mut fonts, &look, w, h);
+        let frame = render(term.inner(), &t.palette, &mut fonts, &look, w, h, &Default::default());
         let path = PathBuf::from(&out_dir).join(format!("{}.png", t.id));
         frame.save_png(&path)?;
         println!("  {} ({}) -> {}", t.name, if t.light { "亮" } else { "暗" }, path.display());

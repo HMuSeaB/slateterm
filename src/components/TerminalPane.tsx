@@ -10,7 +10,7 @@ import "@xterm/xterm/css/xterm.css";
 import { PathAttachmentChips } from "./PathAttachmentChips";
 import { DropOverlay } from "./DropOverlay";
 import { recordCommand } from "../lib/completionEngine";
-import { GridTerminal } from "../lib/gridTerminal";
+import { GridSearch, GridTerminal } from "../lib/gridTerminal";
 import { createClaudeIdleWatcher, playCompletionChime } from "../lib/notify";
 import { detectedImageExtension, imageBlobToPngBytes, imageMimeType } from "../lib/imageBytes";
 import {
@@ -74,12 +74,16 @@ type Props = {
 type TerminalBinding = {
   terminal: Terminal;
   /**
-   * grid 渲染器下这两个 addon 不可用（它们绑死在 xterm 的内部实现上）。
+   * fitAddon 绑死在 xterm 的内部实现上，grid 路径下没有；fit 由 Rust 侧渲染自己算。
    * 用可空类型而不是伪造一个空对象：调用处能看出"可能不存在"，
    * 比假装有、点下去才炸更安全。
    */
   fitAddon: FitAddon | null;
-  searchAddon: SearchAddon | null;
+  /**
+   * 搜索：xterm 路径用 SearchAddon，grid 路径用 GridSearch（命中在 Rust 侧算）。
+   * 两者方法同名，返回值一个是 boolean 一个是 Promise<boolean>，调用处统一 await。
+   */
+  searchAddon: SearchAddon | GridSearch | null;
   webglAddon?: WebglAddon;
   lastCols: number;
   lastRows: number;
@@ -723,17 +727,15 @@ function TerminalPane({
     });
   }
 
-  function runSearch(term: string, direction: "next" | "previous" = "next", incremental = false) {
+  async function runSearch(term: string, direction: "next" | "previous" = "next", incremental = false) {
     const binding = bindingRef.current;
     const normalized = term.trim();
     if (!binding) {
       return false;
     }
 
-    // grid 路径的搜索还没实现（需要 Rust 侧提供 match 接口）。
-    // 明确告诉用户，而不是静默什么都不发生。
     if (!binding.searchAddon) {
-      setSearchStatus("Search is not available with the grid renderer yet.");
+      setSearchStatus("Search is not available with this renderer.");
       return false;
     }
 
@@ -743,10 +745,12 @@ function TerminalPane({
       return false;
     }
 
+    // xterm 的 addon 返回 boolean，GridSearch 返回 Promise。
+    // 统一 await：同步值也会正常穿过，两条路径共用这一处。
     const found =
       direction === "previous"
-        ? binding.searchAddon.findPrevious(normalized, { incremental, caseSensitive: false })
-        : binding.searchAddon.findNext(normalized, { incremental, caseSensitive: false });
+        ? await binding.searchAddon.findPrevious(normalized, { incremental, caseSensitive: false })
+        : await binding.searchAddon.findNext(normalized, { incremental, caseSensitive: false });
 
     setSearchStatus(found ? null : `No matches for "${normalized}"`);
     return found;
@@ -844,13 +848,15 @@ function TerminalPane({
         });
 
       const gridDispose = grid.onData(handleTerminalInput);
+      // 按键规则只写一份：Ctrl+C 复制、Ctrl+F 搜索、字号调整都走同一个处理函数
+      grid.attachCustomKeyEventHandler((event) =>
+        handleKeyDown(event, grid as unknown as Terminal),
+      );
 
-      // 借用 xterm 的类型槽位，只填实际会用到的字段。
-      // searchAddon 等方法在 grid 路径下不可用，见下方调用处的判空。
       bindingRef.current = {
         terminal: grid as unknown as Terminal,
         fitAddon: null,
-        searchAddon: null,
+        searchAddon: new GridSearch(grid),
         webglAddon: undefined,
         lastCols: 0,
         lastRows: 0,
@@ -922,13 +928,20 @@ function TerminalPane({
 
     const dataDispose = terminal.onData(handleTerminalInput);
 
-    terminal.attachCustomKeyEventHandler((event) => {
+    /**
+     * 按键拦截。
+     *
+     * 定义成函数声明（而不是 const 箭头）是为了让 grid 分支能先调用它：
+     * 分支在函数体前面就 return 了，只有声明会被提升过去。
+     * `target` 是实际接管的渲染器，两条路径都传自己那一个。
+     */
+    function handleKeyDown(event: KeyboardEvent, target: Terminal): boolean {
       if (event.type !== "keydown") {
         return true;
       }
 
       const key = event.key.toLowerCase();
-      const hasSelection = terminal.hasSelection();
+      const hasSelection = target.hasSelection();
       const activePathCompletion = pathCompletionRef.current;
 
       if (activePathCompletion) {
@@ -953,12 +966,12 @@ function TerminalPane({
       }
 
       if ((event.ctrlKey && !event.shiftKey && key === "c" && hasSelection) || (event.ctrlKey && event.shiftKey && key === "c")) {
-        const selectedText = terminal.getSelection();
+        const selectedText = target.getSelection();
         if (selectedText) {
           void writeClipboardText(selectedText)
             .then(() => setSessionStatus({ tone: "info", message: "Copied selection." }))
             .catch((error) => setSessionStatus({ tone: "error", message: `Copy failed: ${String(error)}` }));
-          terminal.clearSelection();
+          target.clearSelection();
           return false;
         }
       }
@@ -1026,7 +1039,9 @@ function TerminalPane({
       }
 
       return true;
-    });
+    }
+
+    terminal.attachCustomKeyEventHandler((event) => handleKeyDown(event, terminal));
 
     const resizeObserver = new ResizeObserver(() => {
       scheduleFit("resize-observer");

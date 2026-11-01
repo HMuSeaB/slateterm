@@ -128,7 +128,7 @@ fn main() -> Result<(), String> {
     }
 
     let (w, h) = frame_size(term.cols(), term.rows(), &fonts, &look);
-    let frame = render(term.inner(), &palette, &mut fonts, &look, w, h);
+    let frame = render(term.inner(), &palette, &mut fonts, &look, w, h, &Default::default());
 
     let path = PathBuf::from(&out);
     if let Some(dir) = path.parent() {

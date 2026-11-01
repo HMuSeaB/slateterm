@@ -9,7 +9,12 @@ pub mod palette;
 pub mod render;
 pub mod theme;
 
-pub use hub::{GridFrame, GridHub, HubOptions, SharedGridHub, base64_decode, base64_encode, encode_png};
+pub use hub::{
+    GridFrame, GridHub, HubOptions, ScrollInfo, SearchInfo, SharedGridHub, base64_decode,
+    base64_encode, encode_png,
+};
 pub use palette::{Palette, Rgba8};
-pub use render::{Frame, GridSize, Look, Terminal, frame_size, render};
+pub use render::{
+    Frame, GridSize, Look, MatchSpan, Overlay, Terminal, frame_size, is_wide, render,
+};
 pub use theme::Theme;

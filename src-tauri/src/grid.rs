@@ -8,7 +8,7 @@
 
 use std::sync::Arc;
 
-use slateterm_grid::GridHub;
+pub use slateterm_grid::{GridHub, ScrollInfo, SearchInfo};
 
 /// 发给前端的一帧。
 ///
@@ -24,6 +24,9 @@ pub struct FramePayload {
     pub cell_width: f32,
     pub cell_height: f32,
     pub padding: f32,
+    /// 已向上滚了多少行，前端据此画滚动条
+    pub display_offset: usize,
+    pub history_size: usize,
     /// `data:image/png;base64,...`，前端可直接赋给 img
     pub data_url: String,
 }
@@ -36,6 +39,35 @@ pub struct ThemeEntry {
     pub light: bool,
 }
 
+/// 滚动状态。字段名和前端 `ScrollInfo` 对齐。
+#[derive(serde::Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct ScrollPayload {
+    pub offset: usize,
+    pub history: usize,
+    pub rows: usize,
+}
+
+impl From<ScrollInfo> for ScrollPayload {
+    fn from(info: ScrollInfo) -> Self {
+        Self { offset: info.offset, history: info.history, rows: info.rows }
+    }
+}
+
+/// 搜索结果。`active` 为 `None` 表示没有命中。
+#[derive(serde::Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct SearchPayload {
+    pub count: usize,
+    pub active: Option<usize>,
+}
+
+impl From<SearchInfo> for SearchPayload {
+    fn from(info: SearchInfo) -> Self {
+        Self { count: info.count, active: info.active }
+    }
+}
+
 pub fn encode_png(frame: &slateterm_grid::GridFrame) -> Result<FramePayload, String> {
     let (data_url, _bytes) = slateterm_grid::encode_png(frame)?;
     Ok(FramePayload {
@@ -46,6 +78,8 @@ pub fn encode_png(frame: &slateterm_grid::GridFrame) -> Result<FramePayload, Str
         cell_width: frame.cell_width,
         cell_height: frame.cell_height,
         padding: frame.padding,
+        display_offset: frame.display_offset,
+        history_size: frame.history_size,
         data_url,
     })
 }

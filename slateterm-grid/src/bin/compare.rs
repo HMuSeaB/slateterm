@@ -77,7 +77,7 @@ fn main() -> Result<(), String> {
         let mut term = Terminal::new(cols, rows);
         term.feed(script(&t.palette).as_bytes());
         let (w, h) = frame_size(term.cols(), term.rows(), &fonts, &look);
-        let frame = render(term.inner(), &t.palette, &mut fonts, &look, w, h);
+        let frame = render(term.inner(), &t.palette, &mut fonts, &look, w, h, &Default::default());
 
         // 标题条：用该主题自己的背景色 + 前景色
         let mut panel = Vec::with_capacity((w * (h + 24)) * 4);
