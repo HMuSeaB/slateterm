@@ -270,6 +270,14 @@ impl Terminal {
     pub fn cursor_line(&self) -> i32 {
         self.term.grid().cursor.point.line.0
     }
+
+    /// 程序是否开启了括号粘贴（`\x1b[?2004h`）。
+    ///
+    /// 前端据此决定粘贴时要不要包 `\x1b[200~`：不看这个的话，
+    /// 在没开启的应用里粘贴会插进去一串可见的转义字符。
+    pub fn bracketed_paste(&self) -> bool {
+        self.term.mode().contains(TermMode::BRACKETED_PASTE)
+    }
 }
 
 /// 一帧的渲染结果。

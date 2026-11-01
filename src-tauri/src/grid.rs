@@ -27,6 +27,8 @@ pub struct FramePayload {
     /// 已向上滚了多少行，前端据此画滚动条
     pub display_offset: usize,
     pub history_size: usize,
+    /// 程序开启了括号粘贴时，前端粘贴才包 `\x1b[200~`
+    pub bracketed_paste: bool,
     /// `data:image/png;base64,...`，前端可直接赋给 img
     pub data_url: String,
 }
@@ -80,6 +82,7 @@ pub fn encode_png(frame: &slateterm_grid::GridFrame) -> Result<FramePayload, Str
         padding: frame.padding,
         display_offset: frame.display_offset,
         history_size: frame.history_size,
+        bracketed_paste: frame.bracketed_paste,
         data_url,
     })
 }

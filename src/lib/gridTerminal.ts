@@ -22,6 +22,7 @@ type FramePayload = {
   padding: number;
   displayOffset: number;
   historySize: number;
+  bracketedPaste: boolean;
   dataUrl: string;
 };
 
@@ -101,6 +102,8 @@ export class GridTerminal {
   /** 当前向上滚了多少行 */
   private displayOffset = 0;
   private historySize = 0;
+  /** 程序是否开了括号粘贴模式，由后端每帧带回来 */
+  private bracketedPaste = false;
   /** 选区状态。文本要缓存：`getSelection()` 在按键回调里必须同步返回。 */
   private hasSel = false;
   private selectionText = "";
@@ -247,6 +250,22 @@ export class GridTerminal {
       });
   }
 
+  /** 兼容 xterm 的 `paste()`：内容经 onData 进同一条输入链路。 */
+  paste(data: string) {
+    if (this.disposed || !data) {
+      return;
+    }
+    this.emitData(this.wrapPaste(data));
+  }
+
+  /**
+   * 括号粘贴只在程序主动开启时才包。
+   * 无条件包会在没开的应用里插进一串可见的 `\x1b[200~`。
+   */
+  private wrapPaste(text: string): string {
+    return this.bracketedPaste ? `\x1b[200~${text}\x1b[201~` : text;
+  }
+
   /** 让宿主能主动请求重绘（选区、搜索命中变化后）。 */
   markDirty() {
     if (this.disposed) {
@@ -323,6 +342,7 @@ export class GridTerminal {
       };
       this.frameCols = frame.cols;
       this.frameRows = frame.rows;
+      this.bracketedPaste = frame.bracketedPaste;
       this.scale = frame.width > 0 ? this.canvas.clientWidth / frame.width || 1 : 1;
       if (this.displayOffset !== frame.displayOffset) {
         this.displayOffset = frame.displayOffset;
@@ -613,8 +633,7 @@ export class GridTerminal {
         const text = event.clipboardData?.getData("text");
         if (text) {
           event.preventDefault();
-          // 开了括号粘贴模式时要包一层，否则多行粘贴会被 shell 当成逐条执行
-          this.emitData(`\x1b[200~${text}\x1b[201~`);
+          this.emitData(this.wrapPaste(text));
         }
       },
       { signal },

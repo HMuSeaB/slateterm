@@ -29,6 +29,8 @@ pub struct GridFrame {
     /// 已在回滚区滚了多少行，0 表示贴底
     pub display_offset: usize,
     pub history_size: usize,
+    /// 程序是否开启了括号粘贴，前端据此决定粘贴要不要包 `\x1b[200~`
+    pub bracketed_paste: bool,
 }
 
 /// 滚动状态。前端据此画滚动条。
@@ -347,6 +349,7 @@ impl GridHub {
             padding: look.padding as f32,
             display_offset: term.display_offset(),
             history_size: term.history_size(),
+            bracketed_paste: term.bracketed_paste(),
         })
     }
 
