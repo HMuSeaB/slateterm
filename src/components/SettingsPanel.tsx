@@ -127,6 +127,21 @@ export default function SettingsPanel({
         </label>
 
         <label>
+          <span>Terminal Renderer</span>
+          <select
+            value={settings.terminalRenderer ?? "xterm"}
+            onChange={(e) => update("terminalRenderer", e.target.value as Settings["terminalRenderer"])}
+          >
+            <option value="xterm">xterm.js (default)</option>
+            <option value="grid">Grid (self-drawn)</option>
+          </select>
+          <small>
+            Grid 由 Rust 侧解析并栅格化，颜色跟随 14 套主题；搜索暂不可用。
+            切换会重建终端，当前屏内容清空。
+          </small>
+        </label>
+
+        <label>
           <span>Startup Shell</span>
           <select
             value={settings.defaultProfileId}

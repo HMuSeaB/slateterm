@@ -8,7 +8,7 @@ use std::path::PathBuf;
 use std::sync::mpsc;
 use std::time::{Duration, Instant};
 
-use portable_pty::{CommandBuilder, MasterPty, PtySize, native_pty_system};
+use portable_pty::{CommandBuilder, PtySize, native_pty_system};
 
 use slateterm_grid::font::FontPair;
 use slateterm_grid::palette::Palette;

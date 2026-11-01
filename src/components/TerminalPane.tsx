@@ -1,4 +1,5 @@
 import { listen } from "@tauri-apps/api/event";
+import { invoke } from "@tauri-apps/api/core";
 import { memo, useEffect, useMemo, useRef, useState } from "react";
 import { FitAddon } from "@xterm/addon-fit";
 import { SearchAddon } from "@xterm/addon-search";
@@ -9,6 +10,7 @@ import "@xterm/xterm/css/xterm.css";
 import { PathAttachmentChips } from "./PathAttachmentChips";
 import { DropOverlay } from "./DropOverlay";
 import { recordCommand } from "../lib/completionEngine";
+import { GridTerminal } from "../lib/gridTerminal";
 import { createClaudeIdleWatcher, playCompletionChime } from "../lib/notify";
 import { detectedImageExtension, imageBlobToPngBytes, imageMimeType } from "../lib/imageBytes";
 import {
@@ -71,8 +73,13 @@ type Props = {
 
 type TerminalBinding = {
   terminal: Terminal;
-  fitAddon: FitAddon;
-  searchAddon: SearchAddon;
+  /**
+   * grid 渲染器下这两个 addon 不可用（它们绑死在 xterm 的内部实现上）。
+   * 用可空类型而不是伪造一个空对象：调用处能看出"可能不存在"，
+   * 比假装有、点下去才炸更安全。
+   */
+  fitAddon: FitAddon | null;
+  searchAddon: SearchAddon | null;
   webglAddon?: WebglAddon;
   lastCols: number;
   lastRows: number;
@@ -136,6 +143,17 @@ function completionValue(entry: FileEntry, completion: PathCompletion) {
   const prefix = separator >= 0 ? completion.typedPath.slice(0, separator + 1) : "";
   const value = `${prefix}${entry.name}${entry.isDirectory ? "\\" : ""}`;
   return `${completion.quote}${value}`;
+}
+
+/**
+ * 把界面的明暗模式映射到 grid 主题 id。
+ *
+ * grid 侧有 14 套 alacritty 主题，但界面目前只有 graphite / paper 两档。
+ * 这里先做一一对应，保持两套渲染器观感一致；
+ * 以后要做"任选主题"时，只需把这个函数换成读 settings 里的新字段。
+ */
+function themeIdForMode(theme: Settings["theme"]): string {
+  return theme === "paper" ? "ely-light" : "ely-dark";
 }
 
 function themeForMode(theme: Settings["theme"]) {
@@ -653,6 +671,12 @@ function TerminalPane({
       return;
     }
 
+    // grid 渲染器自己跟着 ResizeObserver 走，不需要外部 fit，
+    // 它的格数由 Rust 侧按实际像素算好了。
+    if (!binding.fitAddon) {
+      return;
+    }
+
     // Hidden tabs (display:none) yield zero/garbage fit geometry; skip and
     // wait for the ResizeObserver refit when the tab becomes visible.
     if (container.offsetParent === null) {
@@ -706,6 +730,13 @@ function TerminalPane({
       return false;
     }
 
+    // grid 路径的搜索还没实现（需要 Rust 侧提供 match 接口）。
+    // 明确告诉用户，而不是静默什么都不发生。
+    if (!binding.searchAddon) {
+      setSearchStatus("Search is not available with the grid renderer yet.");
+      return false;
+    }
+
     if (!normalized) {
       binding.searchAddon.clearDecorations();
       setSearchStatus(null);
@@ -728,6 +759,109 @@ function TerminalPane({
   useEffect(() => {
     if (!containerRef.current || bindingRef.current) {
       return;
+    }
+
+    /**
+     * 终端输入的统一处理。
+     *
+     * 两条渲染路径（xterm / grid）都调这一个函数：
+     * 路径附件拼装、命令历史记录、输入缓冲维护这些逻辑只写一份，
+     * 否则换渲染器就会悄悄丢掉某几个功能。
+     */
+    const handleTerminalInput = (data: string) => {
+      clearTransientStatus();
+
+      if ((data === "\r" || data === "\n") && isClaudeRuntime() && pendingPathAttachmentsRef.current.length > 0) {
+        const attachmentText = formatTerminalPaths(
+          pendingPathAttachmentsRef.current.map((attachment) => attachment.path),
+        );
+        const separator = inputBufferRef.current.trim() ? " " : "";
+        sendInput(`${separator}${attachmentText}\r`, true);
+        clearPendingPathAttachments();
+        updateBuffer("");
+        return;
+      }
+
+      if (
+        (data === "\x7f" || data === "\x08")
+        && !inputBufferRef.current
+        && pendingPathAttachmentsRef.current.length > 0
+      ) {
+        updatePendingPathAttachments(pendingPathAttachmentsRef.current.slice(0, -1));
+        return;
+      }
+
+      sendInput(data);
+
+      if (data === "\r" || data === "\n") {
+        // 只把 shell 会话的输入记进命令历史；Claude 对话内容不算命令
+        if (inputBufferRef.current.trim() && !isClaudeRuntime()) {
+          recordCommand(inputBufferRef.current);
+        }
+        updateBuffer("");
+      } else if (data === "\x7f" || data === "\x08") {
+        updateBuffer(inputBufferRef.current.slice(0, -1));
+      } else if (data === "\x03" || data === "\x15") {
+        clearPendingPathAttachments();
+        updateBuffer("");
+      } else if (!data.startsWith("\x1b")) {
+        const printable = data.replace(/[\x00-\x1F\x7F-\x9F]/g, "");
+        if (printable) {
+          updateBuffer(inputBufferRef.current + printable);
+        }
+      } else {
+        updateBuffer("");
+      }
+    };
+
+    // 渲染器分流：grid 走 Rust 侧自绘，其余一切照旧。
+    // 刻意让两条路径共用同一个 `bindingRef` 骨架，
+    // 这样上层 1400 多行输入/搜索/粘贴逻辑不需要知道底下是谁在画。
+    if (settings.terminalRenderer === "grid") {
+      const grid = new GridTerminal({
+        sessionId,
+        cols: 80,
+        rows: 24,
+        onResize: (nextCols, nextRows) => {
+          void resizeSession(sessionId, nextCols, nextRows).catch(() => {
+            // 会话可能已关闭，静默即可
+          });
+        },
+      });
+      void GridTerminal.create(sessionId, 80, 24)
+        .then(() => {
+          if (!containerRef.current) {
+            return;
+          }
+          grid.open(containerRef.current);
+          grid.focus();
+        })
+        .catch((error) => {
+          setSessionStatus({
+            tone: "error",
+            message: `Grid renderer failed to start: ${String(error)}`,
+          });
+        });
+
+      const gridDispose = grid.onData(handleTerminalInput);
+
+      // 借用 xterm 的类型槽位，只填实际会用到的字段。
+      // searchAddon 等方法在 grid 路径下不可用，见下方调用处的判空。
+      bindingRef.current = {
+        terminal: grid as unknown as Terminal,
+        fitAddon: null,
+        searchAddon: null,
+        webglAddon: undefined,
+        lastCols: 0,
+        lastRows: 0,
+      };
+
+      return () => {
+        gridDispose.dispose();
+        void invoke("grid_close", { sessionId }).catch(() => {});
+        grid.dispose();
+        bindingRef.current = null;
+      };
     }
 
     const terminal = new Terminal({
@@ -786,51 +920,7 @@ function TerminalPane({
     // Claude Code 设了 preferredNotifChannel=terminal_bell 时会在回复结束发 BEL
     const bellDispose = terminal.onBell(() => notifyClaudeFinished());
 
-    const dataDispose = terminal.onData((data) => {
-      clearTransientStatus();
-
-      if ((data === "\r" || data === "\n") && isClaudeRuntime() && pendingPathAttachmentsRef.current.length > 0) {
-        const attachmentText = formatTerminalPaths(
-          pendingPathAttachmentsRef.current.map((attachment) => attachment.path),
-        );
-        const separator = inputBufferRef.current.trim() ? " " : "";
-        sendInput(`${separator}${attachmentText}\r`, true);
-        clearPendingPathAttachments();
-        updateBuffer("");
-        return;
-      }
-
-      if (
-        (data === "\x7f" || data === "\x08")
-        && !inputBufferRef.current
-        && pendingPathAttachmentsRef.current.length > 0
-      ) {
-        updatePendingPathAttachments(pendingPathAttachmentsRef.current.slice(0, -1));
-        return;
-      }
-
-      sendInput(data);
-
-      if (data === "\r" || data === "\n") {
-        // 只把 shell 会话的输入记进命令历史；Claude 对话内容不算命令
-        if (inputBufferRef.current.trim() && !isClaudeRuntime()) {
-          recordCommand(inputBufferRef.current);
-        }
-        updateBuffer("");
-      } else if (data === "\x7f" || data === "\x08") {
-        updateBuffer(inputBufferRef.current.slice(0, -1));
-      } else if (data === "\x03" || data === "\x15") {
-        clearPendingPathAttachments();
-        updateBuffer("");
-      } else if (!data.startsWith("\x1b")) {
-        const printable = data.replace(/[\x00-\x1F\x7F-\x9F]/g, "");
-        if (printable) {
-          updateBuffer(inputBufferRef.current + printable);
-        }
-      } else {
-        updateBuffer("");
-      }
-    });
+    const dataDispose = terminal.onData(handleTerminalInput);
 
     terminal.attachCustomKeyEventHandler((event) => {
       if (event.type !== "keydown") {
@@ -979,12 +1069,12 @@ function TerminalPane({
           console.warn("SlateTerm: webgl teardown failed", error);
         }
         try {
-          binding.fitAddon.dispose();
+          binding.fitAddon?.dispose();
         } catch (error) {
           console.warn("SlateTerm: fitAddon teardown failed", error);
         }
         try {
-          binding.searchAddon.dispose();
+          binding.searchAddon?.dispose();
         } catch (error) {
           console.warn("SlateTerm: searchAddon teardown failed", error);
         }
@@ -995,11 +1085,29 @@ function TerminalPane({
         }
       }
     };
-  }, [sessionId]);
+    // 切换渲染器必须重建终端：两条路径的 DOM 与状态都不兼容。
+    // 代价是当前屏内容清空，这是用户主动切换时的合理预期。
+  }, [sessionId, settings.terminalRenderer]);
 
   useEffect(() => {
     const binding = bindingRef.current;
     if (!binding) {
+      return;
+    }
+
+    // grid 渲染器没有 xterm 的 options 对象：字号、行距、主题都归 Rust 侧管，
+    // 通过 grid_set_look / grid_set_theme 下发，且要等字体重新栅格化。
+    if (!binding.fitAddon) {
+      void invoke("grid_set_look", {
+        fontSize: settings.fontSize,
+        lineHeight: settings.lineHeight,
+        padding: 16,
+      })
+        .then(() => invoke("grid_set_theme", { id: themeIdForMode(settings.theme) }))
+        .then(() => binding.terminal.write("\x1b[0m")) // 触发一次重绘
+        .catch((error) => {
+          console.warn("SlateTerm: grid settings update failed", error);
+        });
       return;
     }
 
@@ -1041,7 +1149,7 @@ function TerminalPane({
       return () => cancelAnimationFrame(frame);
     }
 
-    bindingRef.current?.searchAddon.clearDecorations();
+    bindingRef.current?.searchAddon?.clearDecorations();
     setQuery("");
     setSearchStatus(null);
     if (active) {
@@ -1252,7 +1360,7 @@ function TerminalPane({
                   setQuery(nextQuery);
                   void runSearch(nextQuery, "next", true);
                 }}
-                onBlur={() => bindingRef.current?.searchAddon.clearActiveDecoration()}
+                onBlur={() => bindingRef.current?.searchAddon?.clearActiveDecoration()}
                 onKeyDown={(event) => {
                   if (event.key === "Enter") {
                     event.preventDefault();

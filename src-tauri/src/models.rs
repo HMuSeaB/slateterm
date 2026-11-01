@@ -160,6 +160,14 @@ pub struct Settings {
     pub proxy: ProxyConfig,
     pub completion_sound: bool,
     pub remote_attach: bool,
+    /// `xterm`（默认）或 `grid`（Rust 侧自绘网格）。
+    /// 用 String 而不是枚举：旧配置文件里没有这个字段时要能平滑降级。
+    #[serde(default = "default_terminal_renderer")]
+    pub terminal_renderer: String,
+}
+
+fn default_terminal_renderer() -> String {
+    "xterm".into()
 }
 
 impl Default for Settings {
@@ -180,6 +188,7 @@ impl Default for Settings {
             proxy: ProxyConfig::default(),
             completion_sound: true,
             remote_attach: false,
+            terminal_renderer: default_terminal_renderer(),
         }
     }
 }

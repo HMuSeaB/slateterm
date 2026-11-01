@@ -67,7 +67,15 @@ export type Settings = {
   proxy?: ProxySettings;
   completionSound?: boolean;
   remoteAttach?: boolean;
+  /**
+   * 终端渲染器。
+   * `xterm` 是默认路径；`grid` 走 Rust 侧自绘网格。
+   * 显式开关而不是自动切换：两条路径的行为差异需要人眼确认。
+   */
+  terminalRenderer?: TerminalRenderer;
 };
+
+export type TerminalRenderer = "xterm" | "grid";
 
 export type PaneRuntimeMode = "shell" | "claude";
 export type PaneSessionState = "running" | "exited" | "error";

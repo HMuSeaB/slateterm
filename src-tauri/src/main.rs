@@ -52,7 +52,9 @@ struct AppState {
 
 #[tauri::command]
 fn grid_create_session(state: State<AppState>, session_id: String, cols: usize, rows: usize) -> Result<(), String> {
-    state.grid.create(&session_id, cols, rows)
+    // 用 ensure 而不是 create：React 严格模式会重复挂载，
+    // 无条件重建会清掉已经收到的输出。
+    state.grid.ensure(&session_id, cols, rows)
 }
 
 /// 把 PTY 的原始字节喂给网格。
@@ -60,7 +62,7 @@ fn grid_create_session(state: State<AppState>, session_id: String, cols: usize, 
 /// 避免 JSON 数组传输 8k 字节时的体积膨胀。
 #[tauri::command]
 fn grid_feed(state: State<AppState>, session_id: String, base64: String) -> Result<(), String> {
-    let bytes = base64_decode(&base64)?;
+    let bytes = slateterm_grid::base64_decode(&base64)?;
     state.grid.feed(&session_id, &bytes);
     Ok(())
 }
@@ -84,13 +86,13 @@ fn grid_frame(state: State<AppState>, session_id: String, max_width: u32) -> Res
 }
 
 #[tauri::command]
-fn grid_list_themes(state: State<AppState>) -> Result<Vec<grid::ThemeEntry>, String> {
-    Ok(state
+fn grid_list_themes(state: State<AppState>) -> Vec<grid::ThemeEntry> {
+    state
         .grid
-        .themes()?
+        .themes()
         .into_iter()
         .map(|(id, name, light)| grid::ThemeEntry { id, name, light })
-        .collect())
+        .collect()
 }
 
 #[tauri::command]
@@ -101,34 +103,6 @@ fn grid_set_theme(state: State<AppState>, id: String) -> Result<(), String> {
 #[tauri::command]
 fn grid_set_look(state: State<AppState>, font_size: f32, line_height: f32, padding: i32) {
     state.grid.set_look(font_size, line_height, padding);
-}
-
-/// 标准 base64 解码，省一个依赖。
-fn base64_decode(input: &str) -> Result<Vec<u8>, String> {
-    const TABLE: &[u8; 64] = b"ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/";
-    let mut rev = [255u8; 256];
-    for (i, c) in TABLE.iter().enumerate() {
-        rev[*c as usize] = i as u8;
-    }
-    let mut out = Vec::with_capacity(input.len() * 3 / 4);
-    let mut acc = 0u32;
-    let mut bits = 0u32;
-    for b in input.bytes() {
-        if b == b'=' || b == b'\n' || b == b'\r' {
-            continue;
-        }
-        let v = rev[b as usize];
-        if v == 255 {
-            return Err(format!("非法 base64 字符: {}", b as char));
-        }
-        acc = (acc << 6) | v as u32;
-        bits += 6;
-        if bits >= 8 {
-            bits -= 8;
-            out.push((acc >> bits) as u8);
-        }
-    }
-    Ok(out)
 }
 
 #[tauri::command]

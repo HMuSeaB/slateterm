@@ -81,6 +81,16 @@ export class GridTerminal {
     return this.container;
   }
 
+  /** 兼容 xterm 的 `focus()`。 */
+  focus() {
+    this.canvas?.focus();
+  }
+
+  /** 会话结束或组件卸载时调用。 */
+  disposeSilently() {
+    this.dispose();
+  }
+
   /** 后端已建好网格会话。 */
   static async create(sessionId: string, cols: number, rows: number) {
     await invoke("grid_create_session", { sessionId, cols, rows });

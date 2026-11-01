@@ -80,7 +80,7 @@ pub fn parse(id: &str, name: &str, text: &str) -> Result<Theme, String> {
         let key = key.trim();
         let value = value.trim();
 
-        if let Some(idx) = key.strip_prefix("palette") {
+        if key.strip_prefix("palette").is_some() {
             // 形如 `palette = 3=#f9e2af`，等号右边还有一层
             let Some((i, color)) = value.split_once('=') else { continue };
             let Ok(i) = i.trim().parse::<usize>() else { continue };
@@ -225,6 +225,49 @@ fn display_name(id: &str) -> String {
         .join(" ")
 }
 
+/// 编译期内嵌的主题。
+///
+/// 为什么不读磁盘：SlateTerm 直接分发 exe（`bundle.active = false`），
+/// 用户机器上不一定有 `themes/` 目录。内嵌后二进制自包含，
+/// 也不受工作目录、安装路径影响。
+///
+/// 需要加主题时在这里补一行，`include_str!` 会在编译期校验文件存在。
+const BUILTIN: &[(&str, &str)] = &[
+    ("ely-dark", include_str!("../themes/ely-dark.toml")),
+    ("ely-light", include_str!("../themes/ely-light.toml")),
+    ("catppuccin-mocha", include_str!("../themes/catppuccin-mocha.toml")),
+    ("catppuccin-macchiato", include_str!("../themes/catppuccin-macchiato.toml")),
+    ("catppuccin-frappe", include_str!("../themes/catppuccin-frappe.toml")),
+    ("catppuccin-latte", include_str!("../themes/catppuccin-latte.toml")),
+    ("tokyo-night", include_str!("../themes/tokyo-night.toml")),
+    ("dracula", include_str!("../themes/dracula.toml")),
+    ("nord", include_str!("../themes/nord.toml")),
+    ("gruvbox-dark", include_str!("../themes/gruvbox-dark.toml")),
+    ("kanagawa-wave", include_str!("../themes/kanagawa-wave.toml")),
+    ("rose-pine", include_str!("../themes/rose-pine.toml")),
+    ("solarized-light", include_str!("../themes/solarized-light.toml")),
+    ("one-light", include_str!("../themes/one-light.toml")),
+];
+
+/// 取得全部内嵌主题。这是运行时唯一需要的入口。
+pub fn builtin() -> Vec<Theme> {
+    BUILTIN
+        .iter()
+        .filter_map(|(id, text)| {
+            parse(id, &display_name(id), text)
+                .map_err(|e| eprintln!("SlateTerm: 内置主题 {id} 解析失败: {e}"))
+                .ok()
+        })
+        .collect()
+}
+
+/// 按 id 取一套内置主题。
+pub fn builtin_by_id(id: &str) -> Option<Theme> {
+    BUILTIN.iter().find(|(tid, _)| *tid == id).and_then(|(tid, text)| {
+        parse(tid, &display_name(tid), text).ok()
+    })
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -277,8 +320,8 @@ cursor-color = #f5e0dc
 
     #[test]
     fn every_shipped_theme_is_readable() {
-        let dir = Path::new(env!("CARGO_MANIFEST_DIR")).join("themes");
-        let themes = load_dir(&dir).unwrap();
+        // 测内嵌主题而不是磁盘目录：这才是运行时真正用到的来源。
+        let themes = builtin();
         assert!(themes.len() >= 14, "主题数量不足: {}", themes.len());
         for t in &themes {
             for (i, c) in t.palette.ansi.iter().enumerate() {
@@ -290,6 +333,15 @@ cursor-color = #f5e0dc
                 "{} 前景对比度不足",
                 t.id
             );
+        }
+    }
+
+    /// 内嵌主题必须覆盖界面用到的两个 id，否则 grid 渲染器会没主题可用。
+    #[test]
+    fn builtin_covers_modes_used_by_ui() {
+        for id in ["ely-dark", "ely-light"] {
+            let t = builtin_by_id(id).unwrap_or_else(|| panic!("缺少内置主题 {id}"));
+            assert_eq!(t.id, id);
         }
     }
 }
