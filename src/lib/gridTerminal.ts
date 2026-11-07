@@ -12,6 +12,8 @@
 
 import { invoke } from "@tauri-apps/api/core";
 
+import { openExternalUrl } from "./tauri";
+
 type FramePayload = {
   width: number;
   height: number;
@@ -110,6 +112,12 @@ export class GridTerminal {
   private selectAnchor: { line: number; col: number } | null = null;
   private selecting = false;
   private selectRaf = 0;
+  /** Alt+拖动是块选，普通拖动是行流式选区 */
+  private selectionKind: SelectionKind = "simple";
+  /** 鼠标悬停处的 URL，Ctrl+点击时打开 */
+  private hoverLink: string | null = null;
+  private hoverCell: { line: number; col: number } | null = null;
+  private linkRaf = 0;
 
   constructor(options: GridRendererOptions) {
     this.sessionId = options.sessionId;
@@ -244,10 +252,28 @@ export class GridTerminal {
     this.hasSel = false;
     this.selectionText = "";
     void invoke("grid_clear_selection", { sessionId: this.sessionId })
-      .then(() => this.scheduleRender())
+      .then(() => this.markDirty())
       .catch(() => {
         // 会话可能已关闭，静默即可
       });
+  }
+
+  /** 兼容 xterm 的 `selectAll()`：连同回滚区一起选中。 */
+  async selectAll() {
+    try {
+      await invoke("grid_select_all", { sessionId: this.sessionId });
+      await this.refreshSelectionText();
+    } catch (error) {
+      console.error("[grid] select all failed", error);
+    }
+  }
+
+  /** 选区变化后把文本缓存拉回来，`getSelection()` 要保持同步。 */
+  private async refreshSelectionText() {
+    const text = await invoke<string | null>("grid_selection_text", { sessionId: this.sessionId });
+    this.selectionText = text ?? "";
+    this.hasSel = this.selectionText.length > 0;
+    this.markDirty();
   }
 
   /** 兼容 xterm 的 `paste()`：内容经 onData 进同一条输入链路。 */
@@ -444,18 +470,47 @@ export class GridTerminal {
         endLine: focus.line,
         endCol: focus.col,
       });
-      const text = await invoke<string | null>("grid_selection_text", { sessionId: this.sessionId });
-      this.selectionText = text ?? "";
-      this.hasSel = this.selectionText.length > 0;
-      this.dirty = true;
-      this.scheduleRender();
+      await this.refreshSelectionText();
     } catch (error) {
       console.error("[grid] select failed", error);
     }
   }
 
   /**
-   * 鼠标：拖选、双击选词、三击选行。
+   * 查鼠标所在格是不是链接。
+   *
+   * 只在**格子变化**时发 IPC，同一格里移动不发；再用 rAF 合一次帧。
+   * 后端只查一行一格的代价远小于把整屏链接拉回前端，但也不能每 pixel 一次。
+   */
+  private updateHoverLink(cell: { line: number; col: number }) {
+    if (this.hoverCell && this.hoverCell.line === cell.line && this.hoverCell.col === cell.col) {
+      return;
+    }
+    this.hoverCell = cell;
+    if (this.linkRaf) {
+      cancelAnimationFrame(this.linkRaf);
+    }
+    this.linkRaf = requestAnimationFrame(() => {
+      this.linkRaf = 0;
+      void invoke<string | null>("grid_link_at", {
+        sessionId: this.sessionId,
+        line: cell.line,
+        col: cell.col,
+      })
+        .then((link) => {
+          this.hoverLink = link;
+          if (this.canvas) {
+            this.canvas.style.cursor = link ? "pointer" : "text";
+          }
+        })
+        .catch(() => {
+          this.hoverLink = null;
+        });
+    });
+  }
+
+  /**
+   * 鼠标：拖选、Alt+拖动块选、双击选词、三击选行、Ctrl+点击开链接。
    *
    * 拖选用 rAF 合帧，否则每移动一像素就一次 IPC + 一整帧 PNG。
    */
@@ -468,8 +523,18 @@ export class GridTerminal {
         }
         // 焦点始终给隐藏输入框，canvas 拿不到输入法
         this.focus();
+        // Ctrl+点击链接：和 xterm 的 WebLinksAddon 保持同样的约定，
+        // 不能让这次点击顺手把选区清掉或开始拖选。
+        if (event.ctrlKey && this.hoverLink) {
+          event.preventDefault();
+          void openExternalUrl(this.hoverLink).catch((error) => {
+            console.error("[grid] open link failed", error);
+          });
+          return;
+        }
         this.clearSelection();
         this.selectAnchor = this.cellAt(event.clientX, event.clientY);
+        this.selectionKind = event.altKey ? "block" : "simple";
         this.selecting = true;
         canvas.setPointerCapture(event.pointerId);
         // 单击也要立刻建立零长度选区，xterm 的行为是"点一下取消选区"，
@@ -482,16 +547,19 @@ export class GridTerminal {
       "pointermove",
       (event) => {
         if (!this.selecting || !this.selectAnchor) {
+          // 没在拖选时才查链接，拖动过程中的移动不该打断选区
+          this.updateHoverLink(this.cellAt(event.clientX, event.clientY));
           return;
         }
         const focus = this.cellAt(event.clientX, event.clientY);
         const anchor = this.selectAnchor;
+        const kind = this.selectionKind;
         if (this.selectRaf) {
           cancelAnimationFrame(this.selectRaf);
         }
         this.selectRaf = requestAnimationFrame(() => {
           this.selectRaf = 0;
-          void this.applySelection("simple", anchor, focus);
+          void this.applySelection(kind, anchor, focus);
         });
       },
       { signal },
@@ -506,6 +574,7 @@ export class GridTerminal {
         canvas.releasePointerCapture(event.pointerId);
       }
       const anchor = this.selectAnchor;
+      const kind = this.selectionKind;
       this.selectAnchor = null;
       if (!anchor) {
         return;
@@ -514,17 +583,35 @@ export class GridTerminal {
       if (anchor.line === focus.line && anchor.col === focus.col) {
         return;
       }
-      void this.applySelection("simple", anchor, focus);
+      void this.applySelection(kind, anchor, focus);
     };
     canvas.addEventListener("pointerup", endDrag, { signal });
     canvas.addEventListener("pointercancel", endDrag, { signal });
 
+    // 用 click 的 detail 区分双击/三击：dblclick 事件在第三击时不会再派发，
+    // 只有 click 能可靠拿到 detail=3。
     canvas.addEventListener(
-      "dblclick",
+      "click",
       (event) => {
+        if (event.detail < 2) {
+          return;
+        }
         event.preventDefault();
         const point = this.cellAt(event.clientX, event.clientY);
-        void this.applySelection("semantic", point, point);
+        const kind: SelectionKind = event.detail >= 3 ? "lines" : "semantic";
+        void this.applySelection(kind, point, point);
+      },
+      { signal },
+    );
+
+    canvas.addEventListener(
+      "pointerleave",
+      () => {
+        this.hoverLink = null;
+        this.hoverCell = null;
+        if (this.canvas) {
+          this.canvas.style.cursor = "text";
+        }
       },
       { signal },
     );
@@ -655,6 +742,10 @@ export class GridTerminal {
     if (this.selectRaf) {
       cancelAnimationFrame(this.selectRaf);
       this.selectRaf = 0;
+    }
+    if (this.linkRaf) {
+      cancelAnimationFrame(this.linkRaf);
+      this.linkRaf = 0;
     }
     this.abort?.abort();
     this.abort = null;

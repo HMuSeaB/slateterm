@@ -252,6 +252,8 @@ function TerminalPane({
   const [searchOpen, setSearchOpen] = useState(false);
   const [query, setQuery] = useState("");
   const [searchStatus, setSearchStatus] = useState<string | null>(null);
+  /** 终端区右键菜单。xterm 与 grid 共用这一份，不按渲染器分叉。 */
+  const [terminalMenu, setTerminalMenu] = useState<{ x: number; y: number } | null>(null);
   const [sessionStatus, setSessionStatusState] = useState<StatusBanner | null>(null);
   const [blocksOpen, setBlocksOpen] = useState(false);
   const [commandBlocks, setCommandBlocks] = useState<CommandBlock[]>([]);
@@ -759,6 +761,92 @@ function TerminalPane({
   function closeSearch() {
     setSearchOpen(false);
   }
+
+  /**
+   * 终端区右键菜单。
+   *
+   * 刻意只通过 `bindingRef.current.terminal` 调那些 xterm 和 GridTerminal
+   * 都实现了的方法（getSelection / clearSelection / selectAll / paste），
+   * 所以两条渲染路径共用这一份代码，不会出现某条路径少个功能。
+   */
+  function openTerminalMenu(event: React.MouseEvent) {
+    event.preventDefault();
+    // 贴着屏幕边缘右键时把菜单收回来，别让它跑到窗口外
+    setTerminalMenu({
+      x: Math.max(8, Math.min(event.clientX, window.innerWidth - 260)),
+      y: Math.max(8, Math.min(event.clientY, window.innerHeight - 250)),
+    });
+  }
+
+  function closeTerminalMenu() {
+    setTerminalMenu(null);
+  }
+
+  async function menuCopy() {
+    const terminal = bindingRef.current?.terminal;
+    const text = terminal?.getSelection?.();
+    closeTerminalMenu();
+    if (!text) {
+      return;
+    }
+    try {
+      await writeClipboardText(text);
+      terminal?.clearSelection?.();
+      setSessionStatus({ tone: "info", message: "Copied selection." });
+    } catch (error) {
+      setSessionStatus({ tone: "error", message: `Copy failed: ${String(error)}` });
+    }
+  }
+
+  async function menuPaste() {
+    closeTerminalMenu();
+    try {
+      const text = await readClipboardText();
+      if (text) {
+        pasteText(text);
+      }
+    } catch (error) {
+      setSessionStatus({ tone: "error", message: `Paste failed: ${String(error)}` });
+    }
+  }
+
+  function menuSelectAll() {
+    const terminal = bindingRef.current?.terminal;
+    closeTerminalMenu();
+    // GridTerminal.selectAll 是异步的（要问后端取整段缓冲），这里不 await
+    void terminal?.selectAll?.();
+  }
+
+  function menuClearScreen() {
+    closeTerminalMenu();
+    // 发 Ctrl+L 而不是 xterm.clear()：后者只清可视区，回滚区还留着
+    sendInput("\x0c");
+  }
+
+  function menuFind() {
+    closeTerminalMenu();
+    setSearchOpen(true);
+  }
+
+  useEffect(() => {
+    if (!terminalMenu) {
+      return;
+    }
+    const dismiss = () => setTerminalMenu(null);
+    const onKey = (event: KeyboardEvent) => {
+      if (event.key === "Escape") {
+        setTerminalMenu(null);
+      }
+    };
+    window.addEventListener("pointerdown", dismiss);
+    window.addEventListener("keydown", onKey);
+    window.addEventListener("blur", dismiss);
+    return () => {
+      window.removeEventListener("pointerdown", dismiss);
+      window.removeEventListener("keydown", onKey);
+      window.removeEventListener("blur", dismiss);
+    };
+  }, [terminalMenu]);
 
   useEffect(() => {
     if (!containerRef.current || bindingRef.current) {
@@ -1360,7 +1448,10 @@ function TerminalPane({
       </header>
 
       <div className={`terminal-pane-body ${blocksOpen && commandBlocks.length > 0 ? "has-blocks-drawer" : ""}`}>
-        <div className={`terminal-surface ${pendingPathAttachments.length > 0 ? "has-path-attachments" : ""}`}>
+        <div
+          className={`terminal-surface ${pendingPathAttachments.length > 0 ? "has-path-attachments" : ""}`}
+          onContextMenu={openTerminalMenu}
+        >
         <DropOverlay visible={isDragging} claudeLike={claudeLikeDrop} paths={dragPaths} />
 
         {searchOpen && (
@@ -1437,6 +1528,32 @@ function TerminalPane({
         )}
 
           <div ref={containerRef} className="terminal-host" />
+
+          {terminalMenu && (
+            <div
+              className="tab-context-menu terminal-context-menu"
+              style={{ left: terminalMenu.x, top: terminalMenu.y }}
+              onPointerDown={(event) => event.stopPropagation()}
+              onContextMenu={(event) => event.preventDefault()}
+            >
+              <button type="button" disabled={!bindingRef.current?.terminal.hasSelection?.()} onClick={() => void menuCopy()}>
+                <span>⧉</span><div><strong>Copy</strong><small>Ctrl+Shift+C</small></div>
+              </button>
+              <button type="button" onClick={() => void menuPaste()}>
+                <span>⌘</span><div><strong>Paste</strong><small>Ctrl+V</small></div>
+              </button>
+              <button type="button" onClick={menuSelectAll}>
+                <span>▤</span><div><strong>Select all</strong><small>含回滚区</small></div>
+              </button>
+              <div className="tab-context-menu-divider" />
+              <button type="button" onClick={menuFind}>
+                <span>⌕</span><div><strong>Find</strong><small>Ctrl+Shift+F</small></div>
+              </button>
+              <button type="button" onClick={menuClearScreen}>
+                <span>⌫</span><div><strong>Clear screen</strong><small>Ctrl+L</small></div>
+              </button>
+            </div>
+          )}
 
           <PathAttachmentChips attachments={pendingPathAttachments} onRemove={removePendingPathAttachment} />
         </div>

@@ -104,15 +104,15 @@ cargo run --bin overview -- themes out/themes out/all.png 5
 
 已经完成（`src-tauri/src/grid.rs` + `src/lib/gridTerminal.ts`）：
 
-- 17 个 Tauri 命令：`grid_create_session` / `feed` / `resize` / `close` /
+- 19 个 Tauri 命令：`grid_create_session` / `feed` / `resize` / `close` /
   `frame` / `list_themes` / `set_theme` / `set_look` /
   `scroll` / `scroll_page` / `scroll_to` /
-  `select` / `clear_selection` / `selection_text` /
-  `search` / `search_step` / `clear_search`
+  `select` / `clear_selection` / `selection_text` / `select_all` /
+  `search` / `search_step` / `clear_search` / `link_at`
 - `GridTerminal` 伪装成 xterm 的 `Terminal` 接口
   （`write` / `open` / `dispose` / `onData` / `element` / `focus` /
-  `hasSelection` / `getSelection` / `clearSelection` /
-  `attachCustomKeyEventHandler`），
+  `hasSelection` / `getSelection` / `clearSelection` / `selectAll` /
+  `paste` / `attachCustomKeyEventHandler`），
   `TerminalPane` 的输入处理、路径附件、命令记录、Ctrl+C 复制、Ctrl+F 搜索
   都通过**同一个** `handleTerminalInput` / `handleKeyDown` 走，
   两条渲染路径不会有功能分叉
@@ -135,11 +135,18 @@ cargo run --bin overview -- themes out/themes out/all.png 5
 等于回滚区永远画不出东西。正确做法是 `屏幕行 = 缓冲行 + display_offset`。
 `features.rs` 这张图能直接看出来。
 
-还没做（不影响日常使用）：
+### 右键菜单、块选区、超链接
 
-1. **右键菜单**（复制/粘贴/清屏）。现在只有键盘快捷键。
-2. **块选区**（Alt+拖动）。`SelectionType::Block` 后端已支持，前端没接。
-3. **超链接点击**。xterm 走 `web-links` addon，grid 需要自己扫文本。
+| 功能 | 做法 |
+| --- | --- |
+| 右键菜单 | **两条渲染路径共用一份**（挂在 `.terminal-surface` 上）。只调 xterm 和 `GridTerminal` 都实现了的方法：`getSelection` / `clearSelection` / `selectAll` / `paste`。含复制、粘贴、全选（连回滚区）、查找、清屏（发 `Ctrl+L`，不是 `xterm.clear()`，后者只清可视区） |
+| 块选区 | `Alt+拖动` 传 `SelectionType::Block`，列对齐由 `alacritty_terminal` 负责。双击选词、三击选行也一并接上——三击必须用 `click` 的 `detail`，`dblclick` 在第三击时不会再派发 |
+| 超链接 | Rust 侧 `links_in_line()` 按**字符**扫 `http(s)://` 与 `www.`，返回列区间；渲染层据此画下划线，`Ctrl+点击` 走已有的 `open_external_url`。鼠标只在**跨格**时才发一次 `grid_link_at`，同格移动不发 IPC |
+
+**坐标是这里最容易出错的地方**：`line_chars()` 同时返回字符和每个字符的**起始列**，
+跳过宽字符占位格但不压缩列号。搜索、链接、取文本三条路径都走它，
+否则中文后面的命中区/点击区会整体左移。`links_are_detected_with_wide_chars_before_them`
+这个测试就是钉住这一点：URL 前有 4 个汉字时，`www.` 必须落在第 9 列。
 
 ## 依赖
 

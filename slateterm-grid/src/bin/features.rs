@@ -41,12 +41,14 @@ fn main() -> Result<(), String> {
         script.push_str("   \x1b[38;5;244m|\x1b[0m     \x1b[1;32m^^^^^\x1b[0m \x1b[1;32mhelp: 加下划线前缀\x1b[0m\r\n");
         script.push_str("   \x1b[38;5;244m|\x1b[0m\r\n");
     }
+    // 放在 Finished 之前，这样往上翻两行时它仍在可见区里
+    script.push_str("\x1b[38;5;244m-->\x1b[0m 中文前缀 https://github.com/HMuSeaB/slateterm, 见 www.qq.com.\r\n");
     script.push_str("\x1b[1;32m    Finished\x1b[0m release [optimized] target(s) in 42.18s\r\n");
     script.push_str("\x1b[38;5;109m❯\x1b[0m ");
     term.feed(script.as_bytes());
 
-    // 往上翻 8 行：这样既能看见回滚区内容，也能看见右侧的位置指示条
-    term.scroll_lines(8);
+    // 往上翻 2 行：既能看见回滚区和右侧位置指示条，也留得住末尾那行 URL
+    term.scroll_lines(2);
 
     // 在一段警告正文上做选区，跨两行，验证折行/多行拼接
     let (top, _) = term.visible_lines();
@@ -59,7 +61,7 @@ fn main() -> Result<(), String> {
     // 把选区所在的两行从命中里剔除，避免两种高亮叠在同一处看不清
     matches.retain(|m| m.line != sel_a.0 && m.line != sel_b.0);
 
-    let overlay = Overlay { matches, active: Some(0) };
+    let overlay = Overlay { matches, active: Some(0), links: term.visible_links() };
 
     let look = Look { font_size: 13.0, line_height_ratio: 1.5, padding: 16, ..Look::default() };
     let mut fonts = FontPair::load(

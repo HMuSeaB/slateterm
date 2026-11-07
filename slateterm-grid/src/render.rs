@@ -78,6 +78,8 @@ pub struct Overlay {
     pub matches: Vec<MatchSpan>,
     /// 当前聚焦的命中序号，画得更重一些
     pub active: Option<usize>,
+    /// 可见区里的 URL 区间，画下划线提示可点
+    pub links: Vec<MatchSpan>,
 }
 
 pub struct Terminal {
@@ -198,21 +200,97 @@ impl Terminal {
 
     // ---- 文本与搜索 ----
 
-    /// 取一整行文本（缓冲坐标）。行不存在时返回空串。
-    pub fn line_text(&self, line: i32) -> String {
+    /// 一行的字符，以及每个字符对应的**起始列**。
+    ///
+    /// 宽字符的右半格是占位符，必须跳过，但列号不能压缩 ——
+    /// 否则中文后面的搜索命中、URL 会整体错位。
+    /// 搜索、超链接、取文本三条路径都走这里，避免出现三套坐标规则。
+    fn line_chars(&self, line: i32) -> (Vec<char>, Vec<u32>) {
         let grid = self.term.grid();
         if line < grid.topmost_line().0 || line > grid.bottommost_line().0 {
-            return String::new();
+            return (Vec::new(), Vec::new());
         }
         let row = &grid[Line(line)];
-        let mut out = String::new();
+        let mut chars = Vec::with_capacity(row.line_length().0);
+        let mut cols = Vec::with_capacity(row.line_length().0);
         for col in 0..row.line_length().0 {
             let cell = &row[Column(col)];
-            // 宽字符的右半格是占位符，跳过，否则中文会被输出两遍
             if cell.flags.contains(Flags::WIDE_CHAR_SPACER) {
                 continue;
             }
-            out.push(cell.c);
+            chars.push(cell.c);
+            cols.push(col as u32);
+        }
+        (chars, cols)
+    }
+
+    /// 取一整行文本（缓冲坐标）。行不存在时返回空串。
+    pub fn line_text(&self, line: i32) -> String {
+        self.line_chars(line).0.into_iter().collect()
+    }
+
+    /// 全选整个缓冲（含回滚区）。
+    pub fn select_all(&mut self) {
+        let grid = self.term.grid();
+        let top = grid.topmost_line().0;
+        let bottom = grid.bottommost_line().0;
+        let last = grid.last_column().0 as i32;
+        self.set_selection("simple", (top, 0), (bottom, last));
+    }
+
+    /// 扫出一行的所有 URL，返回 `(起始列, 结束列, 绝对地址)`。
+    fn links_in_line(&self, line: i32) -> Vec<(u32, u32, String)> {
+        let (chars, cols) = self.line_chars(line);
+        let mut out = Vec::new();
+        let mut i = 0usize;
+        while i < chars.len() {
+            let plen = ["https://", "http://", "www."]
+                .iter()
+                .find_map(|p| prefix_len(&chars, i, p));
+            let Some(plen) = plen else {
+                i += 1;
+                continue;
+            };
+            let start = i;
+            i += plen;
+            while i < chars.len() && is_url_char(chars[i]) {
+                i += 1;
+            }
+            // 句末标点常常紧贴 URL，不该被当成链接的一部分
+            let mut end = i;
+            while end > start + plen
+                && matches!(chars[end - 1], '.' | ',' | ';' | ':' | '!' | '?' | ')' | ']' | '}' | '\'' | '"')
+            {
+                end -= 1;
+            }
+            if end > start {
+                let start_col = cols[start];
+                let last = chars[end - 1];
+                let end_col = cols[end - 1] + if is_wide(last) { 2 } else { 1 };
+                let url: String = chars[start..end].iter().collect();
+                let url = if url.starts_with("www.") { format!("https://{url}") } else { url };
+                out.push((start_col, end_col, url));
+            }
+        }
+        out
+    }
+
+    /// 鼠标所在格是否落在 URL 上，是则返回可直接打开的绝对 URL。
+    pub fn link_at(&self, line: i32, col: u32) -> Option<String> {
+        self.links_in_line(line)
+            .into_iter()
+            .find(|(start, end, _)| *start <= col && col < *end)
+            .map(|(_, _, url)| url)
+    }
+
+    /// 当前可见区的 URL 区间，交给渲染层画下划线。
+    pub fn visible_links(&self) -> Vec<MatchSpan> {
+        let (top, bottom) = self.visible_lines();
+        let mut out = Vec::new();
+        for line in top..=bottom {
+            for (start, end, _) in self.links_in_line(line) {
+                out.push(MatchSpan { line, start, end });
+            }
         }
         out
     }
@@ -232,18 +310,8 @@ impl Terminal {
         let (top, bottom) = (self.term.topmost_line().0, self.term.bottommost_line().0);
 
         for line in top..=bottom {
-            let grid_row = &self.term.grid()[Line(line)];
-            // 同时收集每个字符对应的起始列，用来把字符下标换回列号
-            let mut chars = Vec::with_capacity(grid_row.line_length().0);
-            let mut cols = Vec::with_capacity(grid_row.line_length().0);
-            for col in 0..grid_row.line_length().0 {
-                let cell = &grid_row[Column(col)];
-                if cell.flags.contains(Flags::WIDE_CHAR_SPACER) {
-                    continue;
-                }
-                chars.push(fold(cell.c));
-                cols.push(col as u32);
-            }
+            let (raw, cols) = self.line_chars(line);
+            let chars: Vec<char> = raw.iter().map(|&c| fold(c)).collect();
             if chars.len() < needle_chars.len() {
                 continue;
             }
@@ -254,9 +322,9 @@ impl Terminal {
                 }
                 let start_col = cols[start];
                 // 命中的最后一格要包含宽字符的占位格，否则高亮缺一半
-                let last_col = cols[start + needle_chars.len() - 1];
-                let end_col = last_col
-                    + if is_wide(chars[start + needle_chars.len() - 1]) { 2 } else { 1 };
+                let last = chars[start + needle_chars.len() - 1];
+                let end_col = cols[start + needle_chars.len() - 1]
+                    + if is_wide(last) { 2 } else { 1 };
                 out.push(MatchSpan { line, start: start_col, end: end_col });
                 if out.len() >= limit {
                     return out;
@@ -352,6 +420,11 @@ pub fn render(
         let active = overlay.active == Some(index);
         spans.entry(m.line).or_default().push((m.start, m.end, active));
     }
+    // 超链接同理，按行分组后逐格画下划线
+    let mut links: HashMap<i32, Vec<(u32, u32)>> = HashMap::new();
+    for m in &overlay.links {
+        links.entry(m.line).or_default().push((m.start, m.end));
+    }
 
     // 先画所有格子的背景与文字
     for indexed in content.display_iter {
@@ -427,6 +500,23 @@ pub fn render(
             );
         }
 
+        // 超链接下划线：没有视觉提示的话，用户不会知道哪里能 Ctrl+点击
+        if links
+            .get(&point.line.0)
+            .is_some_and(|list| list.iter().any(|&(s, e)| col >= s && col < e))
+        {
+            fill_rect(
+                &mut buf,
+                width,
+                height,
+                x.round() as i32,
+                (y + cell_h - 2.0).round() as i32,
+                cell_w.ceil() as i32,
+                1,
+                fg.mix(palette.cursor, 0.55),
+            );
+        }
+
         // 下划线：终端必须能看见链接和拼写错误
         if cell.flags.intersects(Flags::UNDERLINE | Flags::DOUBLE_UNDERLINE) {
             let uy = (y + cell_h - 2.0).round() as i32;
@@ -499,6 +589,24 @@ pub fn render(
     }
 
     Frame { width, height, pixels: buf }
+}
+
+/// `chars[i..]` 是否以 `prefix` 开头，是则返回前缀占的字符数。
+fn prefix_len(chars: &[char], i: usize, prefix: &str) -> Option<usize> {
+    let len = prefix.chars().count();
+    if i + len > chars.len() {
+        return None;
+    }
+    chars[i..i + len]
+        .iter()
+        .zip(prefix.chars())
+        .all(|(a, b)| *a == b)
+        .then_some(len)
+}
+
+/// URL 里允许出现的字符。空白、控制字符和尖括号一律截断。
+fn is_url_char(c: char) -> bool {
+    !c.is_whitespace() && !c.is_control() && !matches!(c, '<' | '>' | '"' | '`')
 }
 
 /// 便捷构造：按格数与视觉参数算出像素尺寸。

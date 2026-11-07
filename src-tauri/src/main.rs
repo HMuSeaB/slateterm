@@ -182,6 +182,24 @@ fn grid_clear_search(state: State<AppState>, session_id: String) -> Result<(), S
     state.grid.clear_search(&session_id)
 }
 
+// ---- 全选与超链接 ----
+
+#[tauri::command]
+fn grid_select_all(state: State<AppState>, session_id: String) -> Result<(), String> {
+    state.grid.select_all(&session_id)
+}
+
+/// 返回该格所在 URL 的绝对地址；不在链接上时为 `null`。
+#[tauri::command]
+fn grid_link_at(
+    state: State<AppState>,
+    session_id: String,
+    line: i32,
+    col: u32,
+) -> Result<Option<String>, String> {
+    state.grid.link_at(&session_id, line, col)
+}
+
 #[tauri::command]
 fn list_profiles(state: State<AppState>) -> Vec<Profile> {
     state.profiles.clone()
@@ -837,6 +855,8 @@ fn main() {
             grid_search,
             grid_search_step,
             grid_clear_search,
+            grid_select_all,
+            grid_link_at,
             create_session,
             write_input,
             resize_session,

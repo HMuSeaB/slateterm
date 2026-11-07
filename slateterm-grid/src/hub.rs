@@ -259,6 +259,15 @@ impl GridHub {
         self.with_session(session_id, |s| s.term.selection_text())
     }
 
+    pub fn select_all(&self, session_id: &str) -> Result<(), String> {
+        self.with_session(session_id, |s| s.term.select_all())
+    }
+
+    /// 鼠标所在格是否落在 URL 上。只查一格，比把整屏链接拉回前端便宜。
+    pub fn link_at(&self, session_id: &str, line: i32, col: u32) -> Result<Option<String>, String> {
+        self.with_session(session_id, |s| s.term.link_at(line, col))
+    }
+
     // ---- 搜索 ----
 
     /// 从新搜索。命中后自动滚到第一条。
@@ -336,7 +345,11 @@ impl GridHub {
             h = (h as f32 * k).max(1.0) as usize;
         }
 
-        let overlay = Overlay { matches: session.matches.clone(), active: session.active };
+        let overlay = Overlay {
+            matches: session.matches.clone(),
+            active: session.active,
+            links: term.visible_links(),
+        };
         let frame = render(term.inner(), &theme.palette, fonts, look, w, h, &overlay);
         Ok(GridFrame {
             width: frame.width as u32,
@@ -601,6 +614,55 @@ mod tests {
         // 后续输出会移动已有内容，旧列号不再可信
         hub.feed("s1", b"beta\r\n");
         assert_eq!(hub.search_info_len("s1"), 0);
+    }
+
+    #[test]
+    fn links_are_detected_with_wide_chars_before_them() {
+        let hub = GridHub::new();
+        hub.create("s1", 120, 4).unwrap();
+        hub.feed("s1", "https://example.com/a?q=1,\r\n中文前缀 www.qq.com.\r\n".as_bytes());
+
+        // 句末逗号要被裁掉
+        assert_eq!(
+            hub.link_at("s1", 0, 0).unwrap().as_deref(),
+            Some("https://example.com/a?q=1")
+        );
+        assert_eq!(hub.link_at("s1", 0, 40).unwrap(), None);
+
+        // 第二行 URL 前有 4 个汉字（各占两格）+ 1 个空格，
+        // 所以 `www.` 从第 9 列开始。按字节/字符下标算会错到这里来。
+        assert_eq!(
+            hub.link_at("s1", 1, 9).unwrap().as_deref(),
+            Some("https://www.qq.com")
+        );
+        assert_eq!(hub.link_at("s1", 1, 8).unwrap(), None);
+        assert_eq!(hub.link_at("s1", 1, 0).unwrap(), None);
+    }
+
+    #[test]
+    fn block_selection_keeps_columns_aligned() {
+        let hub = GridHub::new();
+        hub.create("s1", 20, 4).unwrap();
+        hub.feed("s1", b"abcdef\r\n123456\r\n");
+
+        hub.select("s1", "block", (0, 1), (1, 3)).unwrap();
+        assert_eq!(hub.selection_text("s1").unwrap().as_deref(), Some("bcd\n234"));
+    }
+
+    #[test]
+    fn select_all_reaches_into_scrollback() {
+        let hub = GridHub::new();
+        hub.create("s1", 20, 3).unwrap();
+        let mut out = Vec::new();
+        for i in 0..10 {
+            out.extend_from_slice(format!("line{i}\r\n").as_bytes());
+        }
+        hub.feed("s1", &out);
+
+        hub.select_all("s1").unwrap();
+        let text = hub.selection_text("s1").unwrap().unwrap_or_default();
+        assert!(text.contains("line0"), "全选漏了回滚区: {text:?}");
+        assert!(text.contains("line9"), "全选漏了最新行: {text:?}");
     }
 
     impl GridHub {
