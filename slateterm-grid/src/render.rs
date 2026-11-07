@@ -339,6 +339,20 @@ impl Terminal {
         self.term.grid().cursor.point.line.0
     }
 
+    /// 光标在**屏幕**上的格坐标（不含 padding）。
+    ///
+    /// 前端拿它定位那个隐藏输入框，输入法候选框才会跟着光标走，
+    /// 否则候选框会飘在容器左上角。滚上去之后光标可能落在屏幕外，
+    /// 由前端自行钳制。
+    pub fn cursor_cell(&self) -> (i32, i32) {
+        let grid = self.term.grid();
+        let point = grid.cursor.point;
+        (
+            point.line.0 + grid.display_offset() as i32,
+            point.column.0 as i32,
+        )
+    }
+
     /// 程序是否开启了括号粘贴（`\x1b[?2004h`）。
     ///
     /// 前端据此决定粘贴时要不要包 `\x1b[200~`：不看这个的话，

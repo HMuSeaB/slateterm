@@ -31,6 +31,9 @@ pub struct GridFrame {
     pub history_size: usize,
     /// 程序是否开启了括号粘贴，前端据此决定粘贴要不要包 `\x1b[200~`
     pub bracketed_paste: bool,
+    /// 光标在屏幕上的格坐标，前端用来定位隐藏输入框（输入法候选框跟随光标）
+    pub cursor_row: i32,
+    pub cursor_col: i32,
 }
 
 /// 滚动状态。前端据此画滚动条。
@@ -363,6 +366,8 @@ impl GridHub {
             display_offset: term.display_offset(),
             history_size: term.history_size(),
             bracketed_paste: term.bracketed_paste(),
+            cursor_row: term.cursor_cell().0,
+            cursor_col: term.cursor_cell().1,
         })
     }
 

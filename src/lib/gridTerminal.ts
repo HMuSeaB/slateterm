@@ -25,6 +25,9 @@ type FramePayload = {
   displayOffset: number;
   historySize: number;
   bracketedPaste: boolean;
+  /** 光标在屏幕上的格坐标，用来把隐藏输入框摆到光标处 */
+  cursorRow: number;
+  cursorCol: number;
   dataUrl: string;
 };
 
@@ -106,6 +109,9 @@ export class GridTerminal {
   private historySize = 0;
   /** 程序是否开了括号粘贴模式，由后端每帧带回来 */
   private bracketedPaste = false;
+  /** 光标的屏幕格坐标，用来把隐藏输入框摆到光标处 */
+  private cursorRow = 0;
+  private cursorCol = 0;
   /** 选区状态。文本要缓存：`getSelection()` 在按键回调里必须同步返回。 */
   private hasSel = false;
   private selectionText = "";
@@ -195,6 +201,9 @@ export class GridTerminal {
     this.bindInput(ime, this.abort.signal);
     this.bindPointer(canvas, this.abort.signal);
     this.scheduleRender();
+    // 主动抢一次焦点：会话是启动时按 savedState 自动恢复的，
+    // 用户不一定会点终端区，不主动聚焦的话按键全部落到 body 上。
+    this.focus();
   }
 
   /** 写入一段输出（与 xterm 的 `write` 同签名）。 */
@@ -292,6 +301,28 @@ export class GridTerminal {
     return this.bracketedPaste ? `\x1b[200~${text}\x1b[201~` : text;
   }
 
+  /**
+   * 把隐藏输入框摆到光标处。
+   *
+   * 它不只是个收键的钩子——输入法的候选框会贴着这个元素显示，
+   * 固定在左上角的话，中文候选框会飘在终端外面。
+   */
+  private positionIme() {
+    const ime = this.imeInput;
+    if (!ime) {
+      return;
+    }
+    const scale = this.scale || 1;
+    const cw = this.metrics.cellWidth * scale;
+    const ch = this.metrics.cellHeight * scale;
+    const pad = this.metrics.padding * scale;
+    // 光标滚出屏幕时也别把它甩到负坐标，留在边缘即可
+    const x = Math.max(0, pad + this.cursorCol * cw);
+    const y = Math.max(0, pad + this.cursorRow * ch);
+    ime.style.left = `${x}px`;
+    ime.style.top = `${y}px`;
+  }
+
   /** 让宿主能主动请求重绘（选区、搜索命中变化后）。 */
   markDirty() {
     if (this.disposed) {
@@ -375,7 +406,10 @@ export class GridTerminal {
       this.frameCols = frame.cols;
       this.frameRows = frame.rows;
       this.bracketedPaste = frame.bracketedPaste;
+      this.cursorRow = frame.cursorRow;
+      this.cursorCol = frame.cursorCol;
       this.scale = frame.width > 0 ? this.canvas.clientWidth / frame.width || 1 : 1;
+      this.positionIme();
       if (this.displayOffset !== frame.displayOffset) {
         this.displayOffset = frame.displayOffset;
         this.historySize = frame.historySize;
@@ -515,6 +549,11 @@ export class GridTerminal {
    * 拖选用 rAF 合帧，否则每移动一像素就一次 IPC + 一整帧 PNG。
    */
   private bindPointer(canvas: HTMLCanvasElement, signal: AbortSignal) {
+    // 点 canvas（不可聚焦元素）时 Chromium 会把焦点清到 body，
+    // 隐藏输入框随即失焦，之后所有按键都进不来 —— 直接表现就是"打不出字"。
+    // 必须在 mousedown 上拦：拦 pointerdown 会连带吃掉 click，双击/三击就废了。
+    canvas.addEventListener("mousedown", (event) => event.preventDefault(), { signal });
+
     canvas.addEventListener(
       "pointerdown",
       (event) => {
@@ -551,6 +590,13 @@ export class GridTerminal {
           this.updateHoverLink(this.cellAt(event.clientX, event.clientY));
           return;
         }
+        // 已经松手却没收到 pointerup（在窗口外松开、指针被系统抢走）时收尾，
+        // 否则鼠标每动一下都在改选区，屏幕上会拖出一条不该存在的色带。
+        if (event.buttons === 0) {
+          this.selecting = false;
+          this.selectAnchor = null;
+          return;
+        }
         const focus = this.cellAt(event.clientX, event.clientY);
         const anchor = this.selectAnchor;
         const kind = this.selectionKind;
@@ -570,6 +616,12 @@ export class GridTerminal {
         return;
       }
       this.selecting = false;
+      // 取消还挂着的合帧回调：否则松手之后它才执行，
+      // 会把一次已经结束的拖动画成一条静止的高亮条
+      if (this.selectRaf) {
+        cancelAnimationFrame(this.selectRaf);
+        this.selectRaf = 0;
+      }
       if (canvas.hasPointerCapture(event.pointerId)) {
         canvas.releasePointerCapture(event.pointerId);
       }

@@ -29,6 +29,10 @@ pub struct FramePayload {
     pub history_size: usize,
     /// 程序开启了括号粘贴时，前端粘贴才包 `\x1b[200~`
     pub bracketed_paste: bool,
+    /// 光标在屏幕上的格坐标，前端据此把隐藏输入框摆到光标处，
+    /// 让输入法候选框跟着光标走
+    pub cursor_row: i32,
+    pub cursor_col: i32,
     /// `data:image/png;base64,...`，前端可直接赋给 img
     pub data_url: String,
 }
@@ -83,6 +87,8 @@ pub fn encode_png(frame: &slateterm_grid::GridFrame) -> Result<FramePayload, Str
         display_offset: frame.display_offset,
         history_size: frame.history_size,
         bracketed_paste: frame.bracketed_paste,
+        cursor_row: frame.cursor_row,
+        cursor_col: frame.cursor_col,
         data_url,
     })
 }
